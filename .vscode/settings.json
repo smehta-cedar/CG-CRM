@@ -1,0 +1,15 @@
+{
+  // The virtualenv lives under backend/, not at the workspace root, so the
+  // editor has to be told where it is - otherwise the language server falls
+  // back to the system interpreter, which has Django but none of the
+  // project's other dependencies.
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv/Scripts/python.exe",
+
+  // Imports are written from backend/ as the root ("apps.roles.catalog",
+  // "config.settings.base"), so that directory has to be on the analysis path.
+  "python.analysis.extraPaths": ["${workspaceFolder}/backend"],
+  "basedpyright.analysis.extraPaths": ["${workspaceFolder}/backend"],
+
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": false
+}

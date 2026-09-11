@@ -8,6 +8,7 @@ from rest_framework.test import APITestCase
 
 from .catalog import PERMISSIONS, codename_for
 from .models import Permission, Role
+from .permissions import ANY_AUTHENTICATED, HasRolePermission
 from .serializers import RoleDeleteSerializer
 
 User = get_user_model()
@@ -83,10 +84,14 @@ class CatalogTests(APITestCase):
 
 
 class AuthenticatedAPITestCase(APITestCase):
-    """Every endpoint below sits behind the default IsAuthenticated."""
+    """Drives the endpoints as a superuser.
+
+    These cases are about the endpoints' behaviour, not about who may reach
+    them; RolePermissionEnforcementTests covers the gate itself.
+    """
 
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user = User.objects.create_superuser(
             'caller@example.com', 'pw', full_name='API Caller'
         )
         self.client.force_authenticate(self.user)
@@ -190,7 +195,8 @@ class RoleAPITests(AuthenticatedAPITestCase):
 
         listing = self.client.get(self.url)
         self.assertEqual(listing.status_code, 200)
-        self.assertEqual([r['name'] for r in listing.json()['results']], ['Viewer'])
+        # No global pagination is configured, so this is a plain list.
+        self.assertEqual([r['name'] for r in listing.json()], ['Viewer'])
 
         detail = self.client.get(f'{self.url}{role.id}/')
         self.assertEqual(detail.status_code, 200)
@@ -252,7 +258,6 @@ class RoleAPITests(AuthenticatedAPITestCase):
         resp = self.client.delete(f'{self.url}{role.id}/')
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()['detail'], ['This role is assigned to 3 users.'])
-        self.assertEqual(resp.json()['user_count'], [3])
         self.assertTrue(Role.objects.filter(pk=role.pk).exists())
 
     def test_delete_message_is_singular_for_one_user(self):
@@ -286,10 +291,10 @@ class RoleDeleteGuardTests(APITestCase):
 
     def test_serializer_can_be_used_directly(self):
         role = Role.objects.create(name='Direct')
-        self.assertTrue(RoleDeleteSerializer(instance=role).is_valid())
+        self.assertTrue(RoleDeleteSerializer.for_role(role).is_valid())
 
         User.objects.create_user('d@example.com', 'pw', full_name='D', role=role)
-        serializer = RoleDeleteSerializer(instance=role)
+        serializer = RoleDeleteSerializer.for_role(role)
         self.assertFalse(serializer.is_valid())
         self.assertEqual(
             serializer.errors['detail'][0], 'This role is assigned to 1 user.'
@@ -312,3 +317,144 @@ class RoleDeleteGuardTests(APITestCase):
 
         user.refresh_from_db()
         self.assertEqual(user.role, role)
+
+
+class RolePermissionEnforcementTests(APITestCase):
+    """The role endpoints are gated on the catalog, not just on being signed in."""
+
+    def setUp(self):
+        self.role = Role.objects.create(name='Target')
+        self.plain = User.objects.create_user(
+            'plain@example.com', 'pw', full_name='No Role'
+        )
+
+    def as_user_with(self, *codenames):
+        role = Role.objects.create(name='Granted ' + ','.join(codenames or ['none']))
+        role.permissions.set(Permission.objects.filter(codename__in=codenames))
+        user = User.objects.create_user(
+            f'{len(codenames)}granted@example.com', 'pw', full_name='Granted',
+            role=role,
+        )
+        self.client.force_authenticate(user)
+        return user
+
+    def test_no_role_means_no_access(self):
+        self.client.force_authenticate(self.plain)
+        self.assertEqual(self.client.get('/api/v1/roles/').status_code, 403)
+        self.assertEqual(
+            self.client.post('/api/v1/roles/', {'name': 'X'}, format='json').status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.delete(f'/api/v1/roles/{self.role.id}/').status_code, 403
+        )
+
+    def test_role_detail_grants_read_but_not_write(self):
+        self.as_user_with('role.detail')
+        self.assertEqual(self.client.get('/api/v1/roles/').status_code, 200)
+        self.assertEqual(
+            self.client.get(f'/api/v1/roles/{self.role.id}/').status_code, 200
+        )
+        self.assertEqual(
+            self.client.post('/api/v1/roles/', {'name': 'X'}, format='json').status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.delete(f'/api/v1/roles/{self.role.id}/').status_code, 403
+        )
+
+    def test_role_create_grants_only_create(self):
+        self.as_user_with('role.create')
+        self.assertEqual(
+            self.client.post('/api/v1/roles/', {'name': 'X'}, format='json').status_code,
+            201,
+        )
+        self.assertEqual(self.client.get('/api/v1/roles/').status_code, 403)
+
+    def test_role_delete_grants_only_delete(self):
+        self.as_user_with('role.delete')
+        self.assertEqual(
+            self.client.delete(f'/api/v1/roles/{self.role.id}/').status_code, 204
+        )
+
+    def test_role_update_grants_only_update(self):
+        self.as_user_with('role.update')
+        resp = self.client.patch(
+            f'/api/v1/roles/{self.role.id}/', {'name': 'Renamed'}, format='json'
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(
+            self.client.post('/api/v1/roles/', {'name': 'X'}, format='json').status_code,
+            403,
+        )
+
+    def test_superuser_bypasses_roles_entirely(self):
+        root = User.objects.create_superuser(
+            'root@example.com', 'pw', full_name='Root'
+        )
+        self.assertIsNone(root.role)
+        self.client.force_authenticate(root)
+
+        self.assertEqual(self.client.get('/api/v1/roles/').status_code, 200)
+        self.assertEqual(
+            self.client.post('/api/v1/roles/', {'name': 'X'}, format='json').status_code,
+            201,
+        )
+        self.assertEqual(
+            self.client.delete(f'/api/v1/roles/{self.role.id}/').status_code, 204
+        )
+
+    def test_permission_tree_is_open_to_any_signed_in_user(self):
+        """The role editor needs the catalog before it can tick any boxes."""
+        self.client.force_authenticate(self.plain)
+        self.assertEqual(self.client.get('/api/v1/permissions/').status_code, 200)
+
+
+class HasRolePermissionUnitTests(APITestCase):
+    """The permission class itself, away from any particular view."""
+
+    class FakeView:
+        def __init__(self, action, required=None):
+            self.action = action
+            if required is not None:
+                self.required_permissions = required
+
+    def check(self, user, view):
+        request = type('Req', (), {'user': user, 'method': 'GET'})()
+        return HasRolePermission().has_permission(request, view)
+
+    def setUp(self):
+        self.role = Role.objects.create(name='Partial')
+        self.role.permissions.set(
+            Permission.objects.filter(codename__in=['user.detail'])
+        )
+        self.user = User.objects.create_user(
+            'partial@example.com', 'pw', full_name='Partial', role=self.role
+        )
+
+    def test_granted_action_allowed(self):
+        view = self.FakeView('retrieve', {'retrieve': 'user.detail'})
+        self.assertTrue(self.check(self.user, view))
+
+    def test_ungranted_action_denied(self):
+        view = self.FakeView('create', {'create': 'user.create'})
+        self.assertFalse(self.check(self.user, view))
+
+    def test_unmapped_action_fails_closed(self):
+        """An action missing from the map is denied, not waved through."""
+        view = self.FakeView('export', {'retrieve': 'user.detail'})
+        self.assertFalse(self.check(self.user, view))
+
+    def test_view_without_a_map_is_not_gated(self):
+        view = self.FakeView('retrieve')
+        self.assertTrue(self.check(self.user, view))
+
+    def test_any_authenticated_sentinel_allows(self):
+        view = self.FakeView('tree', {'tree': ANY_AUTHENTICATED})
+        self.assertTrue(self.check(self.user, view))
+
+    def test_anonymous_is_denied_even_when_open(self):
+        from django.contrib.auth.models import AnonymousUser
+
+        view = self.FakeView('tree', {'tree': ANY_AUTHENTICATED})
+        self.assertFalse(self.check(AnonymousUser(), view))

@@ -3,10 +3,12 @@ from collections import OrderedDict
 from django.db.models import Count, ProtectedError
 from drf_spectacular.utils import OpenApiExample, extend_schema, inline_serializer
 from rest_framework import serializers, viewsets
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Permission, Role
+from .permissions import ANY_AUTHENTICATED, HasRolePermission
 from .serializers import RoleDeleteSerializer, RoleSerializer
 
 
@@ -20,11 +22,23 @@ class RoleViewSet(viewsets.ModelViewSet):
         .prefetch_related('permissions')
     )
     serializer_class = RoleSerializer
+    permission_classes = [IsAuthenticated, HasRolePermission]
+
+    required_permissions = {
+        # The catalog has no 'role.list'; listing and reading one role are the
+        # same privilege, so both map to role.detail.
+        'list': 'role.detail',
+        'retrieve': 'role.detail',
+        'create': 'role.create',
+        'update': 'role.update',
+        'partial_update': 'role.update',
+        'destroy': 'role.delete',
+    }
 
     def perform_destroy(self, instance):
         # The guard lives in the serializer so it applies everywhere; the view
         # only runs it.
-        RoleDeleteSerializer(instance=instance).is_valid(raise_exception=True)
+        RoleDeleteSerializer.check(instance)
         try:
             instance.delete()
         except ProtectedError:
@@ -39,6 +53,13 @@ class RoleViewSet(viewsets.ModelViewSet):
 @extend_schema(tags=['Roles'])
 class PermissionTreeView(APIView):
     """The catalog as Module -> Resource -> Actions, for the checkbox tree."""
+
+    permission_classes = [IsAuthenticated, HasRolePermission]
+
+    # Static reference data with nothing sensitive in it, and the role editor
+    # needs it before it knows which boxes to tick. Anyone signed in may read
+    # it; what they can *do* with it is gated on the role endpoints.
+    required_permissions = {'get': ANY_AUTHENTICATED}
 
     @extend_schema(
         responses=inline_serializer(

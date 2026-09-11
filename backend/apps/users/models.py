@@ -1,6 +1,7 @@
 from django.contrib.auth.base_user import AbstractBaseUser
 from django.contrib.auth.models import PermissionsMixin
 from django.db import models
+from django.utils.functional import cached_property
 from django.utils.translation import gettext_lazy as _
 
 from .managers import UserManager
@@ -108,3 +109,44 @@ class User(AbstractBaseUser, PermissionsMixin):
     def can_sign_in(self):
         """Both flags have to be right before this account may authenticate."""
         return self.is_active and not self.is_blocked
+
+    # --- permissions ------------------------------------------------------
+    # Deliberately *not* named has_perm()/get_all_permissions(): those belong
+    # to PermissionsMixin and answer for django.contrib.auth permissions,
+    # which still govern the admin site. These answer for the CRM catalog.
+
+    def has_permission(self, codename):
+        """Is `codename` granted to this account?
+
+        Superusers short-circuit to True without consulting a role - the
+        single early return every permission check in the project funnels
+        through, so there is one place to change if that policy ever hardens.
+        """
+        if self.is_superuser:
+            return True
+        if self.role_id is None:
+            return False
+        return codename in self.permission_codenames
+
+    @cached_property
+    def permission_codenames(self):
+        """Every codename this account effectively holds.
+
+        Cached per instance: a request checks permissions once for the view
+        and again when serialising, and both should not cost a query.
+
+        A superuser gets the whole catalog rather than an empty set - they
+        bypass roles, and the frontend renders its menus from this list, so
+        returning [] would hide every menu from the one account that can see
+        everything.
+        """
+        from apps.roles.models import Permission
+
+        if self.is_superuser:
+            queryset = Permission.objects.all()
+        elif self.role_id is None:
+            return frozenset()
+        else:
+            queryset = Permission.objects.filter(roles__id=self.role_id)
+
+        return frozenset(queryset.values_list('codename', flat=True))

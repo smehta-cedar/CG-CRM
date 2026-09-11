@@ -40,6 +40,9 @@ urlpatterns = [
     # Roles + the permission catalog
     path('api/v1/', include('apps.roles.urls')),
 
+    # Users
+    path('api/v1/', include('apps.users.urls')),
+
     # OpenAPI schema + browsable docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path(
