@@ -23,7 +23,6 @@ from drf_spectacular.views import (
 )
 from rest_framework_simplejwt.views import (
     TokenBlacklistView,
-    TokenObtainPairView,
     TokenRefreshView,
     TokenVerifyView,
 )
@@ -31,8 +30,10 @@ from rest_framework_simplejwt.views import (
 urlpatterns = [
     path('admin/', admin.site.urls),
 
-    # JWT auth: obtain a token pair, refresh it, verify it, blacklist it.
-    path('api/v1/auth/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    # Tokens are obtained from apps.users.LoginView, not TokenObtainPairView:
+    # the stock view cannot tell the login failure modes apart and mints
+    # tokens with no version stamp, which would leave a permanent hole in
+    # blocking. Refresh preserves the stamp, so these are fine as they are.
     path('api/v1/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/v1/auth/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
     path('api/v1/auth/token/blacklist/', TokenBlacklistView.as_view(), name='token_blacklist'),

@@ -58,6 +58,16 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text=_('Can sign in to the Django admin site.'),
     )
 
+    token_version = models.PositiveIntegerField(
+        _('token version'),
+        default=0,
+        editable=False,
+        help_text=_(
+            'Stamped into every JWT issued for this account. Bumping it makes '
+            'all outstanding tokens - access included - stop validating.'
+        ),
+    )
+
     # --- role -------------------------------------------------------------
     role = models.ForeignKey(
         'roles.Role',
@@ -109,6 +119,23 @@ class User(AbstractBaseUser, PermissionsMixin):
     def can_sign_in(self):
         """Both flags have to be right before this account may authenticate."""
         return self.is_active and not self.is_blocked
+
+    def invalidate_tokens(self):
+        """Make every JWT already issued for this account stop working.
+
+        Refresh tokens can be blacklisted, but access tokens are stateless and
+        would stay valid until they expire - up to ACCESS_TOKEN_LIFETIME of
+        unimpeded access after an account is blocked. Bumping a counter that
+        is both stamped into the token and checked on every request closes
+        that window immediately, and costs nothing extra: authentication
+        already loads the user row.
+
+        F() rather than a read-modify-write so two concurrent blocks cannot
+        land on the same version.
+        """
+        self.token_version = models.F('token_version') + 1
+        self.save(update_fields=['token_version'])
+        self.refresh_from_db(fields=['token_version'])
 
     # --- permissions ------------------------------------------------------
     # Deliberately *not* named has_perm()/get_all_permissions(): those belong

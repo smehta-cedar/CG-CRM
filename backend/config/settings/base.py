@@ -126,7 +126,8 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',  # or AllowAny while developing
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # Adds the is_blocked and token-version checks stock SimpleJWT omits.
+        'apps.users.authentication.VersionedJWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',  # for the browsable API / admin
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',

@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from apps.roles.models import Role
 
-from .models import User
+from .models import LoginType, User
 
 
 class NestedRoleSerializer(serializers.ModelSerializer):
@@ -96,9 +96,11 @@ class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         password = validated_data.pop('password', None)
         user = User.objects.create_user(password=password, **validated_data)
-        if password is None:
+        if password is None and user.login_type == LoginType.LOCAL:
             # No password was chosen for them, so there is nothing to sign in
             # with yet; the account waits on a reset rather than being usable.
+            # An SSO account is exempt - it will never use a local password,
+            # so flagging one to be changed would strand it.
             user.must_change_password = True
             user.save(update_fields=['must_change_password'])
         return user

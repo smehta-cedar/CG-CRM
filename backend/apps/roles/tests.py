@@ -4,11 +4,12 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.db.models import ProtectedError
+from rest_framework.exceptions import NotAuthenticated
 from rest_framework.test import APITestCase
 
 from .catalog import PERMISSIONS, codename_for
 from .models import Permission, Role
-from .permissions import ANY_AUTHENTICATED, HasRolePermission
+from .permissions import ANY_AUTHENTICATED, AccessDenied, HasRolePermission
 from .serializers import RoleDeleteSerializer
 
 User = get_user_model()
@@ -414,14 +415,20 @@ class HasRolePermissionUnitTests(APITestCase):
     """The permission class itself, away from any particular view."""
 
     class FakeView:
-        def __init__(self, action, required=None):
+        def __init__(self, action, required=None, exempt=()):
             self.action = action
+            self.password_change_exempt_actions = exempt
             if required is not None:
                 self.required_permissions = required
 
     def check(self, user, view):
         request = type('Req', (), {'user': user, 'method': 'GET'})()
         return HasRolePermission().has_permission(request, view)
+
+    def assertDenied(self, user, view, code):
+        with self.assertRaises(AccessDenied) as caught:
+            self.check(user, view)
+        self.assertEqual(caught.exception.detail['code'], code)
 
     def setUp(self):
         self.role = Role.objects.create(name='Partial')
@@ -433,28 +440,50 @@ class HasRolePermissionUnitTests(APITestCase):
         )
 
     def test_granted_action_allowed(self):
-        view = self.FakeView('retrieve', {'retrieve': 'user.detail'})
-        self.assertTrue(self.check(self.user, view))
+        self.assertTrue(
+            self.check(self.user, self.FakeView('retrieve', {'retrieve': 'user.detail'}))
+        )
 
     def test_ungranted_action_denied(self):
-        view = self.FakeView('create', {'create': 'user.create'})
-        self.assertFalse(self.check(self.user, view))
+        self.assertDenied(
+            self.user, self.FakeView('create', {'create': 'user.create'}),
+            'permission_denied',
+        )
 
     def test_unmapped_action_fails_closed(self):
         """An action missing from the map is denied, not waved through."""
-        view = self.FakeView('export', {'retrieve': 'user.detail'})
-        self.assertFalse(self.check(self.user, view))
+        self.assertDenied(
+            self.user, self.FakeView('export', {'retrieve': 'user.detail'}),
+            'permission_denied',
+        )
 
     def test_view_without_a_map_is_not_gated(self):
-        view = self.FakeView('retrieve')
-        self.assertTrue(self.check(self.user, view))
+        self.assertTrue(self.check(self.user, self.FakeView('retrieve')))
 
     def test_any_authenticated_sentinel_allows(self):
-        view = self.FakeView('tree', {'tree': ANY_AUTHENTICATED})
-        self.assertTrue(self.check(self.user, view))
+        self.assertTrue(
+            self.check(self.user, self.FakeView('tree', {'tree': ANY_AUTHENTICATED}))
+        )
 
     def test_anonymous_is_denied_even_when_open(self):
         from django.contrib.auth.models import AnonymousUser
 
         view = self.FakeView('tree', {'tree': ANY_AUTHENTICATED})
-        self.assertFalse(self.check(AnonymousUser(), view))
+        with self.assertRaises(NotAuthenticated):
+            self.check(AnonymousUser(), view)
+
+    def test_pending_password_change_blocks_a_granted_action(self):
+        self.user.must_change_password = True
+        self.user.save(update_fields=['must_change_password'])
+        self.assertDenied(
+            self.user, self.FakeView('retrieve', {'retrieve': 'user.detail'}),
+            'password_change_required',
+        )
+
+    def test_an_exempt_action_survives_a_pending_password_change(self):
+        self.user.must_change_password = True
+        self.user.save(update_fields=['must_change_password'])
+        view = self.FakeView(
+            'me', {'me': ANY_AUTHENTICATED}, exempt={'me'}
+        )
+        self.assertTrue(self.check(self.user, view))
