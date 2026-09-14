@@ -8,6 +8,18 @@ DEBUG = True
 ALLOWED_HOSTS = []
 
 
+# Request/SQL profiling (django-silk) - local development only.
+# UI at /silk/. https://github.com/jazzband/django-silk
+
+INSTALLED_APPS += ['silk']
+
+# First, so the timing covers every other middleware.
+MIDDLEWARE = ['silk.middleware.SilkyMiddleware'] + MIDDLEWARE
+
+# Optional cProfile per request; enable with @silk_profile or this flag.
+SILKY_PYTHON_PROFILER = True
+
+
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 

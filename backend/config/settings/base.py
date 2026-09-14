@@ -27,8 +27,7 @@ DJANGO_APPS = [
 
 # Project apps, always referenced by their dotted path: 'apps.<name>'
 LOCAL_APPS = [
-    'apps.users',
-    'apps.roles',
+    'apps.accounts',
 ]
 
 THIRD_PARTY_APPS = [
@@ -55,12 +54,7 @@ ROOT_URLCONF = 'config.urls'
 
 # Custom user model - email is the login handle. Set before the first
 # migration; swapping it afterwards is a rebuild, not a migration.
-AUTH_USER_MODEL = 'users.User'
-
-# EmailBackend is ModelBackend plus an `is_blocked` check.
-AUTHENTICATION_BACKENDS = [
-    'apps.users.backends.EmailBackend',
-]
+AUTH_USER_MODEL = 'accounts.User'
 
 TEMPLATES = [
     {
@@ -126,11 +120,19 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',  # or AllowAny while developing
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        # Adds the is_blocked and token-version checks stock SimpleJWT omits.
-        'apps.users.authentication.VersionedJWTAuthentication',
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',  # for the browsable API / admin
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+
+    # Every error comes back as {"success": false, "message", "code", "errors"}.
+    'EXCEPTION_HANDLER': 'apps.base.api.exceptions.exception_handler',
+    'DEFAULT_PAGINATION_CLASS': 'apps.base.api.pagination.StandardPagination',
+
+    # Per IP for login, per user for change-password.
+    'DEFAULT_THROTTLE_RATES': {
+        'auth': '10/minute',
+    },
 }
 
 
@@ -175,5 +177,11 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
 
     'AUTH_HEADER_TYPES': ('Bearer',),
+
+    'UPDATE_LAST_LOGIN': True,
+
+    # Tokens carry a hash of the password, so changing it kills every
+    # access token issued before.
+    'CHECK_REVOKE_TOKEN': True,
     # SIGNING_KEY defaults to SECRET_KEY, which is set per-environment.
 }
