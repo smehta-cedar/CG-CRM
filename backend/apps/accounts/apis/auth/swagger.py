@@ -23,8 +23,14 @@ login = extend_schema(
     tags=TAGS,
     summary='Log in',
     auth=[],
+    description=(
+        'Error codes: `invalid` (400, a field is missing, blank or not an email), '
+        '`invalid_credentials` (401, unknown email or wrong password), '
+        '`account_blocked` (403, right password but the account is blocked), '
+        '`throttled` (429, too many attempts).'
+    ),
     request=LoginSerializer,
-    responses={200: api_response(TokenPairWithUserSerializer), **error_responses(400, 401, 429)},
+    responses={200: api_response(TokenPairWithUserSerializer), **error_responses(400, 401, 403, 429)},
 )
 
 

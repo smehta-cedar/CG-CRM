@@ -19,22 +19,21 @@ from .serializers import (
 TAGS = ['Users']
 
 
-user_list_create = combine_schemas(
-    extend_schema(
-        methods=['GET'],
-        operation_id='users_list',
-        tags=TAGS,
-        summary='List users',
-        parameters=[UserListQuerySerializer, *PAGINATION_PARAMETERS],
-        responses={200: api_response(UserSerializer, paginated=True), **error_responses(400, 401, 403)},
-    ),
-    extend_schema(
-        methods=['POST'],
-        tags=TAGS,
-        summary='Create a user',
-        request=UserCreateSerializer,
-        responses={201: api_response(UserSerializer), **error_responses(400, 401, 403)},
-    ),
+user_list = extend_schema(
+    operation_id='users_list',
+    tags=TAGS,
+    summary='List users',
+    parameters=[UserListQuerySerializer, *PAGINATION_PARAMETERS],
+    responses={200: api_response(UserSerializer, paginated=True), **error_responses(400, 401, 403)},
+)
+
+
+user_create = extend_schema(
+    operation_id='users_create',
+    tags=TAGS,
+    summary='Create a user',
+    request=UserCreateSerializer,
+    responses={201: api_response(UserSerializer), **error_responses(400, 401, 403)},
 )
 
 

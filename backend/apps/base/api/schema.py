@@ -3,15 +3,15 @@
 Each API folder keeps its docs in swagger.py and views.py applies them:
 
     # swagger.py
-    user_list_create = combine_schemas(
-        extend_schema(methods=['GET'], responses={200: api_response(UserSerializer, paginated=True)}),
-        extend_schema(methods=['POST'], request=UserCreateSerializer, responses={201: api_response(UserSerializer)}),
+    user_detail = combine_schemas(
+        extend_schema(methods=['GET'], responses={200: api_response(UserSerializer)}),
+        extend_schema(methods=['PATCH'], request=UserUpdateSerializer, responses={200: api_response(UserSerializer)}),
     )
 
     # views.py
-    @swagger.user_list_create
-    @api_view(['GET', 'POST'])
-    def user_list_create(request): ...
+    @swagger.user_detail
+    @api_view(['GET', 'PATCH'])
+    def user_detail(request, pk): ...
 """
 from drf_spectacular.utils import OpenApiParameter, inline_serializer
 from rest_framework import serializers

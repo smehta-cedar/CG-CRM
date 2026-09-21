@@ -1,17 +1,45 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
+
+from apps.accounts.utils import normalize_email
 
 from ..users.serializers import SetPasswordSerializer, UserSerializer
 
 
 class LoginSerializer(TokenObtainPairSerializer):
-    """Email and password in; a token pair and the user out."""
+    """Email and password in; a token pair and the user out.
+
+    How a failed login is answered, so the frontend can tell them apart:
+
+        400 invalid              a field is missing, blank or not an email (see "errors")
+        401 invalid_credentials  unknown email or wrong password
+        403 account_blocked      right password, but the account is blocked
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # SimpleJWT takes any text here; an EmailField rejects a malformed email as a field error.
+        self.fields['email'] = serializers.EmailField(write_only=True)
 
     def validate(self, attrs):
-        tokens = super().validate(attrs)
+        try:
+            tokens = super().validate(attrs)
+        except AuthenticationFailed as exc:
+            # SimpleJWT answers every failure the same way; say which one it was.
+            if self._is_blocked_user(attrs['email'], attrs['password']):
+                raise PermissionDenied(
+                    'Your account is blocked. Please contact an administrator.', 'account_blocked'
+                ) from exc
+            raise AuthenticationFailed('Incorrect email or password.', 'invalid_credentials') from exc
         return {**tokens, 'user': UserSerializer(self.user).data}
+
+    @staticmethod
+    def _is_blocked_user(email, password):
+        # Only someone who knows the password is told that the account is blocked.
+        user = get_user_model().objects.filter(email=normalize_email(email), is_active=False).first()
+        return user is not None and user.check_password(password)
 
 
 class RefreshSerializer(TokenRefreshSerializer):

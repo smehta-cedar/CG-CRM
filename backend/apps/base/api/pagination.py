@@ -10,27 +10,28 @@ class StandardPagination(PageNumberPagination):
     page_size_query_param = 'page_size'
     max_page_size = 100
 
-    def get_paginated_response(self, data, message=''):
+    def get_meta(self):
         paginator = self.page.paginator
-        return APIResponse(
-            data=data,
-            message=message,
-            meta={
-                'page': self.page.number,
-                'page_size': paginator.per_page,
-                'total_pages': paginator.num_pages,
-                'total_items': paginator.count,
-                'next': self.get_next_link(),
-                'previous': self.get_previous_link(),
-            },
-        )
+        return {
+            'page': self.page.number,
+            'page_size': paginator.per_page,
+            'total_pages': paginator.num_pages,
+            'total_items': paginator.count,
+            'next': self.get_next_link(),
+            'previous': self.get_previous_link(),
+        }
+
+    def get_paginated_response(self, data, message=''):
+        return APIResponse(data=data, message=message, meta=self.get_meta())
 
 
-def paginate(request, queryset, serializer_class, message=''):
-    """One page of `queryset`, serialized and wrapped in the envelope.
+def paginate(request, queryset):
+    """One page of `queryset`, and the meta that describes it.
 
-        return paginate(request, users, UserSerializer, 'Users fetched successfully.')
+        page, meta = paginate(request, users)
+        serializer = UserSerializer(page, many=True)
+        return APIResponse(serializer.data, 'Users fetched successfully.', meta=meta)
     """
     paginator = StandardPagination()
     page = paginator.paginate_queryset(queryset, request)
-    return paginator.get_paginated_response(serializer_class(page, many=True).data, message=message)
+    return page, paginator.get_meta()

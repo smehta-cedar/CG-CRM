@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 def exception_handler(exc, context):
     """Turn every API error into the error envelope (see response.error_body).
 
-    Services and selectors raise plain Django exceptions so they stay free of
-    DRF; they are translated here:
+    Plain Django exceptions (from models, get_object_or_404 and the like) are
+    translated here:
 
         ValidationError   -> 400, field errors under "errors"
-        PermissionDenied  -> 403, with the service's message
+        PermissionDenied  -> 403, with the exception's message
         Http404           -> 404
     """
     exc = _to_drf_exception(exc)

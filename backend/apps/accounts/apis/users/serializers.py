@@ -1,8 +1,6 @@
 from rest_framework import serializers
 
 from apps.accounts.models import Designation, Role, User
-from apps.accounts.selectors.designation_selector import DesignationSelector
-from apps.accounts.selectors.role_selector import RoleSelector
 
 
 class RoleSummarySerializer(serializers.ModelSerializer):
@@ -46,7 +44,7 @@ class UserSerializer(serializers.ModelSerializer):
 def _role_id_field():
     return serializers.PrimaryKeyRelatedField(
         source='role',
-        queryset=RoleSelector().active().get_queryset(),
+        queryset=Role.objects.filter(is_active=True),
         pk_field=serializers.UUIDField(),
         required=False,
         allow_null=True,
@@ -56,7 +54,7 @@ def _role_id_field():
 def _designation_id_field():
     return serializers.PrimaryKeyRelatedField(
         source='designation',
-        queryset=DesignationSelector().active().get_queryset(),
+        queryset=Designation.objects.filter(is_active=True),
         pk_field=serializers.UUIDField(),
         required=False,
         allow_null=True,
