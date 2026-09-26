@@ -59,6 +59,12 @@ All under `/api/v1/`. Everything except `auth/login/` requires
 | GET | `users/me/` | any signed-in user |
 | POST | `users/{id}/block/` · `unblock/` | `user.block` · `user.unblock` |
 | POST | `users/{id}/change-password/` | `user.change_password` |
+| GET | `agencies/` | `agencies` view |
+| POST | `agencies/create/` | `agencies` create |
+| GET, PATCH, DELETE | `agencies/{id}/` | `agencies` view · update · delete |
+
+`GET /agencies/` takes `?search=` (name, alias, NPN, email, phone) and
+`?is_active=`, plus `?page=` / `?page_size=`.
 
 `GET /permissions/` returns the catalog grouped `Module → Resource → Actions`
 for the checkbox tree. `GET /users/me/` returns the signed-in account with its
@@ -169,6 +175,16 @@ with no version stamp — a permanent hole in blocking.
   alone would be bypassed by a shell session or a `queryset.delete()`.
 - **No user delete route.** Accounts are deactivated (`is_active`) or blocked
   (`is_blocked`), so records referencing them keep making sense.
+- **`Agency`** — `name` is unique case-insensitively among live rows; `npn`
+  (National Producer Number, 1-10 digits) is unique among live rows when
+  set, and blank is allowed. `aliases` is a JSON list of strings, trimmed and
+  de-duplicated on write. `is_active` from `BaseModel` is whether the agency
+  is operating.
+- **`State`** — the US states (plus DC) as a lookup table: `name`, two-letter
+  `code` (stored uppercase), and `search_key`, a comma-separated list of
+  lowercase terms a search may match (`"california,ca"`). Seeded by
+  `agency/migrations/0003_seed_states.py`, which carries a frozen copy of
+  `US_STATES` for the same reason the permission catalog does.
 
 ## Tests
 
@@ -194,6 +210,7 @@ backend/
   apps/
     users/    User, auth, JWT, the user API
     roles/    Permission, Role, the catalog, check_access
+    agency/   Agency (name, aliases, NPN, contact, is_active) and its API
 ```
 
 `manage.py startapp <name>` creates apps under `apps/` and rewrites the

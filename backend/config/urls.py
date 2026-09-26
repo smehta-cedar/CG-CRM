@@ -29,6 +29,9 @@ urlpatterns = [
     # Accounts: auth/ and users/
     path('api/v1/', include('apps.accounts.urls')),
 
+    # Agency: agencies/
+    path('api/v1/', include('apps.agency.urls')),
+
     # OpenAPI schema + browsable docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path(

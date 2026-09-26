@@ -28,6 +28,7 @@ DJANGO_APPS = [
 # Project apps, always referenced by their dotted path: 'apps.<name>'
 LOCAL_APPS = [
     'apps.accounts',
+    'apps.agency',
 ]
 
 THIRD_PARTY_APPS = [
