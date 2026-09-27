@@ -34,7 +34,8 @@ agent_create = extend_schema(
     summary='Create an agent',
     description=(
         'Records an "added" note listing every filled field. `licenses` creates one '
-        'active licence row per state, starting today and running two years.'
+        'active licence row per state, starting today and running two years, with the '
+        '`life` and `health` lines as given (both off unless sent).'
     ),
     request=AgentCreateSerializer,
     responses={201: api_response(AgentSerializer), **error_responses(400, 401, 403)},
@@ -54,8 +55,8 @@ agent_detail = combine_schemas(
         summary='Update an agent',
         description=(
             'Records an "edited" note when something changed. `licenses` replaces the set: a '
-            'listed state keeps its row (number as given), an unlisted one loses its row, a '
-            'new one gets an active row starting today.'
+            'listed state keeps its row (number and `life` / `health` lines as given), an '
+            'unlisted one loses its row, a new one gets an active row starting today.'
         ),
         request=AgentUpdateSerializer,
         responses={200: api_response(AgentSerializer), **error_responses(400, 401, 403, 404)},

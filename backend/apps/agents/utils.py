@@ -21,6 +21,7 @@ NOTE_FIELDS = (
     'address',
     'licensed_states',
     'license_numbers',
+    'license_lines',
 )
 
 # How long a new licence runs from its start date, until the form asks for dates.
@@ -117,32 +118,44 @@ def save_agent(agent, actor, **fields):
 
 
 def sync_licenses(agent, actor, wanted, today=None):
-    """Make the agent's licence rows match `wanted`, a list of (State, number).
+    """Make the agent's licence rows match `wanted`, a list of
+    (State, number, life, health).
 
-    A state already licensed keeps its row, with the number as given; a
-    state no longer listed loses its row (soft delete); a new state gets an
-    active row starting today and running LICENSE_TERM_YEARS. Statuses and
-    dates of kept rows are untouched.
+    A state already licensed keeps its row, with the number and lines as
+    given; a state no longer listed loses its row (soft delete); a new state
+    gets an active row starting today and running LICENSE_TERM_YEARS.
+    Statuses and dates of kept rows are untouched.
     """
     today = today or date.today()
     end = today.replace(year=today.year + LICENSE_TERM_YEARS)
-    wanted_by_state = {state.pk: (state, number.strip()) for state, number in wanted}
+    wanted_by_state = {
+        state.pk: (state, number.strip(), bool(life), bool(health)) for state, number, life, health in wanted
+    }
 
     for row in list(agent.licenses.all()):
         if row.state_id not in wanted_by_state:
             row.delete(user=actor)
             continue
-        _, number = wanted_by_state.pop(row.state_id)
-        if number != row.license_number:
+        _, number, life, health = wanted_by_state.pop(row.state_id)
+        changed = [
+            field
+            for field, value in (('license_number', number), ('life', life), ('health', health))
+            if getattr(row, field) != value
+        ]
+        if changed:
             row.license_number = number
+            row.life = life
+            row.health = health
             row.updated_by = actor
-            row.save(update_fields=['license_number', 'updated_by'])
+            row.save(update_fields=[*changed, 'updated_by'])
 
-    for state, number in wanted_by_state.values():
+    for state, number, life, health in wanted_by_state.values():
         AgentStateLicense.objects.create(
             agent=agent,
             state=state,
             license_number=number,
+            life=life,
+            health=health,
             status='active',
             start_date=today,
             end_date=end,
@@ -168,6 +181,10 @@ def snapshot(agent):
         'licensed_states': ', '.join(row.state.code for row in licenses),
         'license_numbers': ', '.join(
             f'{row.state.code} {row.license_number}' for row in licenses if row.license_number
+        ),
+        # "FL Health, TX Life & Health": only the states with a line ticked.
+        'license_lines': ', '.join(
+            f'{row.state.code} {row.lines_text}' for row in licenses if row.lines_text
         ),
     }
 

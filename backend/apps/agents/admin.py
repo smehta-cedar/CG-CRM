@@ -8,7 +8,7 @@ AUDIT_FIELDS = ('created_at', 'updated_at', 'created_by', 'updated_by', 'deleted
 class AgentStateLicenseInline(admin.TabularInline):
     model = AgentStateLicense
     extra = 0
-    fields = ('state', 'license_number', 'status', 'start_date', 'end_date')
+    fields = ('state', 'license_number', 'life', 'health', 'status', 'start_date', 'end_date')
     autocomplete_fields = ('state',)
 
 
@@ -37,8 +37,8 @@ class AgentAdmin(admin.ModelAdmin):
 
 @admin.register(AgentStateLicense)
 class AgentStateLicenseAdmin(admin.ModelAdmin):
-    list_display = ('agent', 'state', 'license_number', 'status', 'start_date', 'end_date')
-    list_filter = ('status', 'state')
+    list_display = ('agent', 'state', 'license_number', 'life', 'health', 'status', 'start_date', 'end_date')
+    list_filter = ('status', 'state', 'life', 'health')
     search_fields = ('agent__name', 'license_number')
     readonly_fields = AUDIT_FIELDS
 

@@ -45,6 +45,18 @@ MODULES = {
         'label': 'Passwords',
         'children': {},
     },
+    'contracts': {
+        'label': 'Contracts',
+        'children': {},
+    },
+    'requests': {
+        'label': 'Requests',
+        'children': {},
+    },
+    'storefront': {
+        'label': 'Storefront',
+        'children': {},
+    },
 }
 
 ACTIONS = ('view', 'create', 'update', 'delete')

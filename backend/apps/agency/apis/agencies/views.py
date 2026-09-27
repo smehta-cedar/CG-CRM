@@ -1,18 +1,23 @@
+from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
-from apps.agency.models import Agency
+from apps.agency.models import Agency, AgencyNote
 from apps.agency.utils import (
+    diff_snapshots,
     filter_agencies,
     get_agency_or_404,
     normalize_email,
     normalize_name,
     normalize_npn,
+    record_note,
     save_agency,
     search_agencies,
+    snapshot,
+    sync_licenses,
 )
-from apps.agency.validators import ensure_name_free, ensure_npn_free
+from apps.agency.validators import ensure_name_free, ensure_npn_free, resolve_licenses
 from apps.base.api.pagination import paginate
 from apps.base.api.permissions import module_permission
 from apps.base.api.response import APIResponse
@@ -21,6 +26,7 @@ from . import swagger
 from .serializers import (
     AgencyCreateSerializer,
     AgencyListQuerySerializer,
+    AgencyNoteSerializer,
     AgencySerializer,
     AgencyUpdateSerializer,
 )
@@ -37,7 +43,7 @@ def agency_list(request):
     query.is_valid(raise_exception=True)
     filters = query.validated_data
 
-    agencies = Agency.objects.all()
+    agencies = Agency.objects.prefetch_related('licenses__state')
 
     search = filters.get('search')
     if search:
@@ -66,17 +72,23 @@ def agency_create(request):
     npn = normalize_npn(data.get('npn', ''))
     ensure_name_free(name)
     ensure_npn_free(npn)
+    licenses = resolve_licenses(data.get('licenses', []))
 
-    agency = Agency.objects.create(
-        name=name,
-        aliases=data.get('aliases', []),
-        is_active=data.get('is_active', True),
-        npn=npn,
-        email=normalize_email(data.get('email', '')),
-        phone=data.get('phone', ''),
-        created_by=request.user,
-        updated_by=request.user,
-    )
+    with transaction.atomic():
+        agency = Agency.objects.create(
+            name=name,
+            aliases=data.get('aliases', []),
+            is_active=data.get('is_active', True),
+            npn=npn,
+            email=normalize_email(data.get('email', '')),
+            phone=data.get('phone', ''),
+            created_by=request.user,
+            updated_by=request.user,
+        )
+        sync_licenses(agency, request.user, licenses)
+        agency = get_agency_or_404(agency.pk)
+        # The note lists every filled field, as the agency now reads.
+        record_note(agency, request.user, AgencyNote.KIND_ADDED, diff_snapshots({}, snapshot(agency)))
     return APIResponse(AgencySerializer(agency).data, 'Agency created successfully.', status=status.HTTP_201_CREATED)
 
 
@@ -109,9 +121,31 @@ def agency_detail(request, pk):
         if 'email' in fields:
             fields['email'] = normalize_email(fields['email'])
 
-        agency = save_agency(agency, request.user, **fields)
+        licenses = None
+        if 'licenses' in fields:
+            licenses = resolve_licenses(fields.pop('licenses'))
+
+        before = snapshot(agency)
+        with transaction.atomic():
+            if fields:
+                save_agency(agency, request.user, **fields)
+            if licenses is not None:
+                sync_licenses(agency, request.user, licenses)
+            # Read the rows again for the note and the response.
+            agency = get_agency_or_404(pk)
+            record_note(agency, request.user, AgencyNote.KIND_EDITED, diff_snapshots(before, snapshot(agency)))
         return APIResponse(AgencySerializer(agency).data, 'Agency updated successfully.')
 
     # DELETE: soft delete; the name and NPN become free for reuse.
     agency.delete(user=request.user)
     return APIResponse(None, 'Agency deleted successfully.')
+
+
+@swagger.agency_notes
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, CAN_MANAGE_AGENCIES])
+def agency_notes(request, pk):
+    agency = get_agency_or_404(pk)
+    # Newest first (the model's ordering). Not paginated: an agency has a handful.
+    notes = agency.notes.select_related('created_by')
+    return APIResponse(AgencyNoteSerializer(notes, many=True).data, 'Agency notes fetched successfully.')

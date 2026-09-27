@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.accounts.models import Designation, Role, User
+from apps.accounts.models import Designation, Role, User, UserNote
 
 
 class RoleSummarySerializer(serializers.ModelSerializer):
@@ -37,6 +37,37 @@ class UserSerializer(serializers.ModelSerializer):
             'updated_at',
         )
         read_only_fields = fields
+
+
+class UserChangeSerializer(serializers.Serializer):
+    """One changed field in a note: {"field", "from", "to", "redacted"?}."""
+
+    field = serializers.CharField()
+    to = serializers.CharField(allow_blank=True)
+    redacted = serializers.BooleanField(required=False)
+
+    def get_fields(self):
+        # "from" is a Python keyword, so it can't be declared on the class.
+        fields = super().get_fields()
+        fields['from'] = serializers.CharField(allow_blank=True)
+        return fields
+
+
+class UserNoteSerializer(serializers.ModelSerializer):
+    """One change-log entry."""
+
+    user_id = serializers.UUIDField(read_only=True)
+    changes = UserChangeSerializer(many=True, read_only=True)
+    created_by = serializers.SerializerMethodField(help_text='The full name of who made the change.')
+
+    class Meta:
+        model = UserNote
+        fields = ('id', 'user_id', 'kind', 'changes', 'created_by', 'created_at')
+        read_only_fields = fields
+
+    def get_created_by(self, note) -> str | None:
+        user = note.created_by
+        return user.full_name if user else None
 
 
 # Only live, active roles and designations can be assigned. The querysets are

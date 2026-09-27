@@ -3,15 +3,18 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
-from apps.accounts.models import User
+from apps.accounts.models import User, UserNote
 from apps.accounts.utils import (
+    diff_snapshots,
     filter_users,
     get_user_or_404,
     normalize_email,
+    record_note,
     revoke_tokens,
     save_user,
     search_users,
     set_user_password,
+    snapshot,
 )
 from apps.accounts.validators import (
     ensure_can_manage,
@@ -29,6 +32,7 @@ from .serializers import (
     SetPasswordSerializer,
     UserCreateSerializer,
     UserListQuerySerializer,
+    UserNoteSerializer,
     UserSerializer,
     UserUpdateSerializer,
 )
@@ -85,16 +89,19 @@ def user_create(request):
     # The unsaved User lets the check reject passwords too similar to the email or name.
     ensure_password_strong(data['password'], User(email=email, full_name=data['full_name']), field='password')
 
-    user = User.objects.create_user(
-        email=email,
-        password=data['password'],
-        full_name=data['full_name'],
-        phone=data.get('phone', ''),
-        role=data.get('role'),
-        designation=data.get('designation'),
-        created_by=request.user,
-        updated_by=request.user,
-    )
+    with transaction.atomic():
+        user = User.objects.create_user(
+            email=email,
+            password=data['password'],
+            full_name=data['full_name'],
+            phone=data.get('phone', ''),
+            role=data.get('role'),
+            designation=data.get('designation'),
+            created_by=request.user,
+            updated_by=request.user,
+        )
+        # The note lists every filled field; the password only as "set".
+        record_note(user, request.user, UserNote.KIND_ADDED, diff_snapshots({}, snapshot(user)))
     return APIResponse(UserSerializer(user).data, 'User created successfully.', status=status.HTTP_201_CREATED)
 
 
@@ -125,7 +132,10 @@ def user_detail(request, pk):
         if 'role' in fields:
             ensure_own_role_unchanged(request.user, user, fields['role'])
 
-        user = save_user(user, request.user, **fields)
+        before = snapshot(user)
+        with transaction.atomic():
+            user = save_user(user, request.user, **fields)
+            record_note(user, request.user, UserNote.KIND_EDITED, diff_snapshots(before, snapshot(user)))
         return APIResponse(UserSerializer(user).data, 'User updated successfully.')
 
     # DELETE: soft delete the user and sign them out, both or neither.
@@ -148,6 +158,7 @@ def user_block(request, pk):
         with transaction.atomic():
             save_user(user, request.user, is_active=False)
             revoke_tokens(user)
+            record_note(user, request.user, UserNote.KIND_EDITED, [{'field': 'status', 'from': 'active', 'to': 'inactive'}])
     return APIResponse(UserSerializer(user).data, 'User blocked successfully.')
 
 
@@ -158,7 +169,9 @@ def user_unblock(request, pk):
     user = get_user_or_404(pk)
     ensure_can_manage(request.user, user)
     if not user.is_active:
-        save_user(user, request.user, is_active=True)
+        with transaction.atomic():
+            save_user(user, request.user, is_active=True)
+            record_note(user, request.user, UserNote.KIND_EDITED, [{'field': 'status', 'from': 'inactive', 'to': 'active'}])
     return APIResponse(UserSerializer(user).data, 'User unblocked successfully.')
 
 
@@ -173,5 +186,27 @@ def user_set_password(request, pk):
     new_password = serializer.validated_data['new_password']
 
     ensure_password_strong(new_password, user, field='new_password')
-    set_user_password(user, request.user, new_password)
+    with transaction.atomic():
+        set_user_password(user, request.user, new_password)
+        record_note(user, request.user, UserNote.KIND_EDITED, [{'field': 'password', 'from': '', 'to': '', 'redacted': True}])
     return APIResponse(None, 'Password updated successfully.')
+
+
+@swagger.user_notes
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, CAN_MANAGE_USERS])
+def user_notes(request, pk):
+    user = get_user_or_404(pk)
+    # Newest first (the model's ordering). Not paginated: a user has a handful.
+    notes = user.notes.select_related('created_by')
+    return APIResponse(UserNoteSerializer(notes, many=True).data, 'User notes fetched successfully.')
+
+
+@swagger.user_notes_all
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, CAN_MANAGE_USERS])
+def user_notes_all(request):
+    """Every live user's notes, newest first, for the Users page's expandable rows."""
+    notes = UserNote.objects.filter(user__deleted_at__isnull=True).select_related('created_by')
+    page, meta = paginate(request, notes)
+    return APIResponse(UserNoteSerializer(page, many=True).data, 'User notes fetched successfully.', meta=meta)

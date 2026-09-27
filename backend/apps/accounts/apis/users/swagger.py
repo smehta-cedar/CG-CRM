@@ -12,6 +12,7 @@ from .serializers import (
     SetPasswordSerializer,
     UserCreateSerializer,
     UserListQuerySerializer,
+    UserNoteSerializer,
     UserSerializer,
     UserUpdateSerializer,
 )
@@ -75,6 +76,25 @@ user_unblock = extend_schema(
     summary='Unblock a user',
     request=None,
     responses={200: api_response(UserSerializer), **error_responses(401, 403, 404)},
+)
+
+
+user_notes = extend_schema(
+    operation_id='users_notes',
+    tags=TAGS,
+    summary="List a user's change notes",
+    description='Newest first. Not paginated. A password change is recorded redacted.',
+    responses={200: api_response(UserNoteSerializer, many=True), **error_responses(401, 403, 404)},
+)
+
+
+user_notes_all = extend_schema(
+    operation_id='users_notes_all',
+    tags=TAGS,
+    summary="List every user's change notes",
+    description='Newest first, paginated.',
+    parameters=PAGINATION_PARAMETERS,
+    responses={200: api_response(UserNoteSerializer, paginated=True), **error_responses(401, 403)},
 )
 
 

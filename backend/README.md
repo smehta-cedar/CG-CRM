@@ -62,6 +62,7 @@ All under `/api/v1/`. Everything except `auth/login/` requires
 | GET | `agencies/` | `agencies` view |
 | POST | `agencies/create/` | `agencies` create |
 | GET, PATCH, DELETE | `agencies/{id}/` | `agencies` view · update · delete |
+| GET | `agencies/{id}/notes/` | `agencies` view |
 | GET | `carriers/` | `carriers` view |
 | POST | `carriers/create/` | `carriers` create |
 | GET, PATCH, DELETE | `carriers/{id}/` | `carriers` view · update · delete |
@@ -74,6 +75,20 @@ All under `/api/v1/`. Everything except `auth/login/` requires
 | POST | `passwords/create/` | `passwords` create |
 | GET, PATCH, DELETE | `passwords/{id}/` | `passwords` view · update · delete |
 | GET | `passwords/{id}/notes/` | `passwords` view |
+| GET | `contracts/` | `contracts` view |
+| POST | `contracts/create/` | `contracts` create |
+| GET, PATCH, DELETE | `contracts/{id}/` | `contracts` view · update · delete |
+| GET | `contracts/{id}/notes/` · `contracts/notes/` | `contracts` view |
+| GET | `users/{id}/notes/` · `users/notes/` | `users` view |
+| GET | `roles/` | `users` view |
+| GET | `requests/` | `requests` view |
+| POST | `requests/create/` · `requests/merch/` | `requests` create |
+| GET, PATCH, DELETE | `requests/{id}/` | `requests` view · update · delete |
+| GET | `storefront/catalog/` | public |
+| GET | `storefront/products/` | `storefront` view |
+| POST | `storefront/products/create/` | `storefront` create |
+| GET, PATCH, DELETE | `storefront/products/{id}/` | `storefront` view · update · delete |
+| GET | `storefront/products/{id}/notes/` | `storefront` view |
 
 `GET /agencies/` takes `?search=` (name, alias, NPN, email, phone) and
 `?is_active=`, plus `?page=` / `?page_size=`.
@@ -108,14 +123,64 @@ agent name then carrier name and carry `agent` and `carrier` summaries. The
 portal password is returned as stored; its change notes only ever say it was
 set or changed (`"redacted": true`).
 
-Seed both from the frontend's JSON, carriers first (passwords refer to agents
-and carriers):
+`GET /contracts/` (appointments: one agent contracted with one carrier)
+takes `?search=` (agent name, carrier name, writing number), `?agent_id=`,
+`?carrier_id=` and `?state=`, plus paging; rows come back by agent name then
+carrier name. `appointed_states` must be states the carrier is available in
+*and* the agent is licensed in; the 400 names the side that blocks a state.
+The writing number is unique within a carrier when set (ignoring case).
+
+`users/` gained change notes: every create, update that changed something,
+block / unblock and password set writes one (the password only as
+`"redacted": true`), read at `users/{id}/notes/` or all at once at
+`users/notes/`. `roles/` lists the live roles a user can be given.
+
+Seed everything from the frontend's JSON, in this order (passwords and
+contracts refer to agents and carriers):
 
 ```bash
 python manage.py seed_carriers
 python manage.py seed_agents              # agents.json + agent-state-licenses.json
 python manage.py seed_passwords           # passwords.json, matched by NPN and carrier name
+python manage.py seed_contracts           # carrier-contracts.json, same matching
+python manage.py seed_users               # users.json + the Admin / Staff roles; local dev only
+python manage.py seed_agency              # agency.json + agency-state-licenses.json
+python manage.py seed_storefront          # the Cedar Grove tee
+python manage.py seed_requests            # requests.json + merch-requests.json, and the shop account
 ```
+
+`storefront/catalog/` is the one public endpoint: every active product
+(name, description, `category` and `product_type` for the shop's nav,
+`image_url`, price, `colors` as {id, label, hex}, `sizes`, `max_quantity`)
+for the shop page, no sign-in. Categories are womens / mens / maternity /
+accessories / holidays and types polos / quarter-zips / shirts / pants /
+belts / hats / backpacks (`PRODUCT_CATEGORIES`, `PRODUCT_TYPES` in
+`apps/storefront/models`); both may be blank. `storefront/products/`
+takes `?category=` and `?product_type=` too. The `storefront/products/`
+endpoints manage them (at least one colour and one size; change notes as
+elsewhere). A merch order (`requests/merch/`) names its `product_id` and
+is checked against that product's colours, sizes and `max_quantity`; it
+stores the colour's label. Run `seed_storefront` before `seed_requests` so
+the seeded orders link to the tee.
+
+`GET /requests/` (HR: an agent's licensing, contract or day-off request, or
+a tee order from the public shop) takes `?type=`, `?status=` and
+`?agent_id=`, plus paging; rows come back oldest first. `requests/create/`
+files an agent's request (licensing and contract need `state` and
+`carrier_id`, `day_off` its two dates); `requests/merch/` files a shop
+order. The shop has no sign-in, so the Next server posts orders as the
+`shop@cedargrove.local` account that `seed_requests` creates with a `Shop`
+role (requests: view and create only); its password is printed once and
+goes in `frontend/.env.local` as `SHOP_API_PASSWORD`. A `PATCH` sets the
+status (pending / approved / denied) or the note.
+
+An agency carries `licenses` (state licence rows) exactly like an agent and
+takes `licenses` on create and update the same way; `agencies/{id}/notes/`
+lists its change notes.
+
+`seed_users` sets passwords exactly as the file holds them, skipping the
+strength validators, and gives Admin every action on every module and Staff
+view on every module. It never touches a superuser.
 
 `GET /permissions/` returns the catalog grouped `Module → Resource → Actions`
 for the checkbox tree. `GET /users/me/` returns the signed-in account with its

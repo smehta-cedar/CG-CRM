@@ -36,6 +36,8 @@ def make_agent(**overrides):
             agent=agent,
             state=State.objects.get(code=item['state']),
             license_number=item.get('license_number', ''),
+            life=item.get('life', False),
+            health=item.get('health', False),
             start_date=date(2024, 1, 1),
             end_date=date(2026, 1, 1),
         )
@@ -187,6 +189,35 @@ class AgentDetailTests(AgentAPITestCase):
                 {'field': 'license_numbers', 'from': 'FL W482913, TX 2104587', 'to': 'CA C1, TX 999'},
             ],
         )
+
+    def test_patch_sets_license_lines_and_records_note(self):
+        agent = make_agent(licenses=[{'state': 'TX', 'license_number': '2104587', 'life': True}])
+        response = self.client.patch(
+            self.detail_url(agent),
+            {
+                'licenses': [
+                    {'state': 'TX', 'license_number': '2104587', 'life': True, 'health': True},
+                    {'state': 'FL', 'license_number': 'W482913', 'health': True},
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data['data']['licenses']
+        self.assertEqual(
+            [(row['state'], row['life'], row['health']) for row in rows],
+            [('FL', False, True), ('TX', True, True)],
+        )
+        # The lines are listed on the note; a state with none ticked is left out.
+        note = agent.notes.get()
+        self.assertIn({'field': 'license_lines', 'from': 'TX Life', 'to': 'FL Health, TX Life & Health'}, note.changes)
+
+        # Sending a state without its lines switches them off.
+        response = self.client.patch(
+            self.detail_url(agent), {'licenses': [{'state': 'TX', 'license_number': '2104587'}]}, format='json'
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([(row['life'], row['health']) for row in response.data['data']['licenses']], [(False, False)])
 
     def test_patch_without_change_writes_no_note(self):
         agent = make_agent()

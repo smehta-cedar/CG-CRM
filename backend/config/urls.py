@@ -41,6 +41,15 @@ urlpatterns = [
     # Passwords: passwords/
     path('api/v1/', include('apps.passwords.urls')),
 
+    # Contracts: contracts/
+    path('api/v1/', include('apps.contracts.urls')),
+
+    # Requests: requests/
+    path('api/v1/', include('apps.requests.urls')),
+
+    # Storefront: storefront/catalog/ (public) and storefront/products/
+    path('api/v1/', include('apps.storefront.urls')),
+
     # OpenAPI schema + browsable docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path(

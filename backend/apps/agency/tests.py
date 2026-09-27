@@ -3,7 +3,7 @@ from rest_framework.test import APITestCase
 
 from apps.accounts.models import Role, RolePermission, User
 
-from .models import Agency
+from .models import Agency, AgencyNote, State
 
 SAMPLE = {
     'name': 'Cedar Grove Senior Health Solutions',
@@ -286,3 +286,44 @@ class StateModelTests(APITestCase):
 
         State.objects.get(code='CA').delete()
         State.objects.create(name='California Again', code='CA')
+
+
+class AgencyLicenseTests(AgencyAPITestCase):
+    def test_create_with_licenses_records_note(self):
+        response = self.client.post(
+            self.create_url(),
+            {**SAMPLE, 'licenses': [{'state': 'TX', 'license_number': '2450019'}, {'state': 'FL', 'license_number': 'L127733'}]},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        rows = response.data['data']['licenses']
+        self.assertEqual([(row['state'], row['license_number'], row['status']) for row in rows], [('FL', 'L127733', 'active'), ('TX', '2450019', 'active')])
+        note = AgencyNote.objects.get(agency_id=response.data['data']['id'])
+        by_field = {change['field']: change['to'] for change in note.changes}
+        self.assertEqual(by_field['licensed_states'], 'FL, TX')
+        self.assertEqual(by_field['license_numbers'], 'FL L127733, TX 2450019')
+
+    def test_patch_syncs_licenses_and_notes(self):
+        agency = make_agency()
+        agency.licenses.create(state=State.objects.get(code='TX'), license_number='1')
+        response = self.client.patch(
+            self.detail_url(agency),
+            {'licenses': [{'state': 'TX', 'license_number': '2'}, {'state': 'GA', 'license_number': '3'}]},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([(row['state'], row['license_number']) for row in response.data['data']['licenses']], [('GA', '3'), ('TX', '2')])
+        self.assertEqual(
+            agency.notes.get().changes,
+            [
+                {'field': 'licensed_states', 'from': 'TX', 'to': 'GA, TX'},
+                {'field': 'license_numbers', 'from': 'TX 1', 'to': 'GA 3, TX 2'},
+            ],
+        )
+        response = self.client.get(reverse('agency:apis:agencies:notes', args=[agency.pk]))
+        self.assertEqual(len(response.data['data']), 1)
+
+    def test_rejects_unknown_license_state(self):
+        response = self.client.post(self.create_url(), {**SAMPLE, 'licenses': [{'state': 'ZZ'}]}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('licenses', response.data['errors'])

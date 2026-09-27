@@ -5,4 +5,5 @@ app_name = 'apis'
 urlpatterns = [
     path('auth/', include('apps.accounts.apis.auth.urls')),
     path('users/', include('apps.accounts.apis.users.urls')),
+    path('roles/', include('apps.accounts.apis.roles.urls')),
 ]

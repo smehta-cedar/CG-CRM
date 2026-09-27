@@ -11,6 +11,7 @@ from apps.base.api.schema import (
 from .serializers import (
     AgencyCreateSerializer,
     AgencyListQuerySerializer,
+    AgencyNoteSerializer,
     AgencySerializer,
     AgencyUpdateSerializer,
 )
@@ -31,6 +32,7 @@ agency_create = extend_schema(
     operation_id='agencies_create',
     tags=TAGS,
     summary='Create an agency',
+    description='Records an "added" note. `licenses` creates one active licence row per state, starting today and running two years.',
     request=AgencyCreateSerializer,
     responses={201: api_response(AgencySerializer), **error_responses(400, 401, 403)},
 )
@@ -47,6 +49,7 @@ agency_detail = combine_schemas(
         methods=['PATCH'],
         tags=TAGS,
         summary='Update an agency',
+        description='Records an "edited" note when something changed. `licenses` replaces the set of licensed states.',
         request=AgencyUpdateSerializer,
         responses={200: api_response(AgencySerializer), **error_responses(400, 401, 403, 404)},
     ),
@@ -57,4 +60,13 @@ agency_detail = combine_schemas(
         description='Soft delete: the agency is hidden and can be restored.',
         responses={200: api_response(), **error_responses(401, 403, 404)},
     ),
+)
+
+
+agency_notes = extend_schema(
+    operation_id='agencies_notes',
+    tags=TAGS,
+    summary="List an agency's change notes",
+    description='Newest first. Not paginated.',
+    responses={200: api_response(AgencyNoteSerializer, many=True), **error_responses(401, 403, 404)},
 )

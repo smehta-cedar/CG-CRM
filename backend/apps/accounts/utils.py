@@ -4,7 +4,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.accounts.models import User
+from apps.accounts.models import User, UserNote
 
 # Helpers the account views share. Checks that can reject a request live in
 # apps.accounts.validators instead.
@@ -70,6 +70,47 @@ def revoke_tokens(user):
         [BlacklistedToken(token=token) for token in tokens],
         ignore_conflicts=True,
     )
+
+
+# The order a user note lists changed fields in. "password" is recorded redacted.
+NOTE_FIELDS = ('name', 'email', 'phone', 'role', 'status', 'password')
+REDACTED_FIELDS = ('password',)
+
+
+def snapshot(user):
+    """The user's fields as a note shows them: the role by name, the status as
+    active / inactive. The password hash is compared but never written."""
+    return {
+        'name': user.full_name,
+        'email': user.email,
+        'phone': user.phone,
+        'role': user.role.name if user.role else '',
+        'status': 'active' if user.is_active else 'inactive',
+        'password': user.password,
+    }
+
+
+def diff_snapshots(before, after):
+    """Fields whose value differs, in NOTE_FIELDS order; redacted fields say
+    only that they changed. `before` is {} for a new user."""
+    changes = []
+    for field in NOTE_FIELDS:
+        from_value = before.get(field, '')
+        to_value = after.get(field, '')
+        if from_value == to_value:
+            continue
+        if field in REDACTED_FIELDS:
+            changes.append({'field': field, 'from': '', 'to': '', 'redacted': True})
+        else:
+            changes.append({'field': field, 'from': from_value, 'to': to_value})
+    return changes
+
+
+def record_note(user, actor, kind, changes):
+    """Append a change note. Nothing is written when there are no changes."""
+    if not changes:
+        return None
+    return UserNote.objects.create(user=user, kind=kind, changes=changes, created_by=actor, updated_by=actor)
 
 
 def issue_tokens(user):

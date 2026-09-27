@@ -25,6 +25,10 @@ class AgentStateLicense(BaseModel):
     derives `licensed_states` / `license_numbers` from them and the agent
     form edits them (a checked state keeps or gets a row, an unchecked one
     loses it).
+
+    `life` and `health` are the lines of business the licence covers in that
+    state, ticked on the agent form beside the state's number. Both start
+    off; the form records what the licence actually covers.
     """
 
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='licenses')
@@ -33,6 +37,14 @@ class AgentStateLicense(BaseModel):
     status = models.CharField(max_length=10, choices=LICENSE_STATUSES, default='active')
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
+    life = models.BooleanField(default=False, help_text='The licence covers life insurance.')
+    health = models.BooleanField(default=False, help_text='The licence covers health insurance.')
+
+    @property
+    def lines_text(self):
+        """"Life & Health", "Life", "Health" or "", as notes show it."""
+        lines = [name for flag, name in ((self.life, 'Life'), (self.health, 'Health')) if flag]
+        return ' & '.join(lines)
 
     class Meta(BaseModel.Meta):
         ordering = ('created_at',)

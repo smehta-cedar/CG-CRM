@@ -23,7 +23,7 @@ class AgentLicenseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AgentStateLicense
-        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date')
+        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date', 'life', 'health')
         read_only_fields = fields
 
 
@@ -91,6 +91,8 @@ class AgentNoteSerializer(serializers.ModelSerializer):
 class LicenseInputSerializer(serializers.Serializer):
     state = serializers.CharField(min_length=2, max_length=2, help_text='Two-letter state code.')
     license_number = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
+    life = serializers.BooleanField(required=False, default=False, help_text='Covers life insurance.')
+    health = serializers.BooleanField(required=False, default=False, help_text='Covers health insurance.')
 
 
 def _aliases_field():

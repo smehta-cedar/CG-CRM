@@ -32,6 +32,9 @@ LOCAL_APPS = [
     'apps.carriers',
     'apps.agents',
     'apps.passwords',
+    'apps.contracts',
+    'apps.requests',
+    'apps.storefront',
 ]
 
 THIRD_PARTY_APPS = [
@@ -166,6 +169,14 @@ SPECTACULAR_SETTINGS = {
     # Strip the API prefix from operation ids so they read `users_list`,
     # not `api_v1_users_list`.
     'SCHEMA_PATH_PREFIX': r'/api/v[0-9]',
+
+    # Three models have a "status" choice field with different values; name
+    # each enum after its model rather than letting spectacular number them.
+    'ENUM_NAME_OVERRIDES': {
+        'LicenseStatusEnum': 'apps.agents.models.LICENSE_STATUSES',
+        'PasswordStatusEnum': 'apps.passwords.models.PASSWORD_STATUSES',
+        'RequestStatusEnum': 'apps.requests.models.REQUEST_STATUSES',
+    },
 }
 
 
