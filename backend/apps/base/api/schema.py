@@ -42,9 +42,15 @@ class ErrorResponseSerializer(serializers.Serializer):
 _envelopes = {}
 
 
-def api_response(serializer_class=None, *, paginated=False):
+def api_response(serializer_class=None, *, paginated=False, many=False):
+    """`paginated` wraps a page (data list + meta); `many` a plain list with no meta."""
     stem = serializer_class.__name__.removesuffix('Serializer') if serializer_class else 'Empty'
-    name = f'{stem}PageResponse' if paginated else f'{stem}Response'
+    if paginated:
+        name = f'{stem}PageResponse'
+    elif many:
+        name = f'{stem}ListResponse'
+    else:
+        name = f'{stem}Response'
 
     if name not in _envelopes:
         fields = {
@@ -56,6 +62,8 @@ def api_response(serializer_class=None, *, paginated=False):
         elif paginated:
             fields['data'] = serializer_class(many=True)
             fields['meta'] = PaginationMetaSerializer()
+        elif many:
+            fields['data'] = serializer_class(many=True)
         else:
             fields['data'] = serializer_class()
         _envelopes[name] = inline_serializer(name=name, fields=fields)

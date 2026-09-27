@@ -62,9 +62,27 @@ All under `/api/v1/`. Everything except `auth/login/` requires
 | GET | `agencies/` | `agencies` view |
 | POST | `agencies/create/` | `agencies` create |
 | GET, PATCH, DELETE | `agencies/{id}/` | `agencies` view · update · delete |
+| GET | `carriers/` | `carriers` view |
+| POST | `carriers/create/` | `carriers` create |
+| GET, PATCH, DELETE | `carriers/{id}/` | `carriers` view · update · delete |
+| GET | `carriers/{id}/notes/` | `carriers` view |
 
 `GET /agencies/` takes `?search=` (name, alias, NPN, email, phone) and
 `?is_active=`, plus `?page=` / `?page_size=`.
+
+`GET /carriers/` takes `?search=` (name, alias, line of business),
+`?is_active=` and `?state=` (two-letter code), plus `?page=` / `?page_size=`;
+rows come back by name. A carrier's `available_states` is a list of state
+codes (rows of `agency.State`), and `lines_of_business` at least one of
+`General`, `Supp/Ancillary`, `MAPD`, `Life`, `Annuities`. The API records a
+change note on every create and on every update that changed something;
+`carriers/{id}/notes/` lists them newest first. Load the carriers from the
+frontend's seed file with:
+
+```bash
+python manage.py seed_carriers            # frontend/data/carriers.json
+python manage.py seed_carriers --file path/to/carriers.json
+```
 
 `GET /permissions/` returns the catalog grouped `Module → Resource → Actions`
 for the checkbox tree. `GET /users/me/` returns the signed-in account with its

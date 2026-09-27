@@ -32,6 +32,9 @@ urlpatterns = [
     # Agency: agencies/
     path('api/v1/', include('apps.agency.urls')),
 
+    # Carriers: carriers/
+    path('api/v1/', include('apps.carriers.urls')),
+
     # OpenAPI schema + browsable docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path(
