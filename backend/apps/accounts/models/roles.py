@@ -41,6 +41,20 @@ MODULES = {
         'label': 'Agents',
         'children': {},
     },
+    # What an agent sees of their own record once agents can sign in (they
+    # cannot yet: no User is linked to an Agent). Granted per section, so a
+    # role can show an agent their licences but not their portal passwords.
+    # Only ever scoped to the signed-in agent's own record.
+    'agent_view': {
+        'label': 'Agent view',
+        'children': {
+            'profile': 'My details',
+            'licenses': 'My licences',
+            'contracts': 'My carriers',
+            'passwords': 'My passwords',
+            'requests': 'My requests',
+        },
+    },
     'passwords': {
         'label': 'Passwords',
         'children': {},
@@ -55,6 +69,18 @@ MODULES = {
     },
     'storefront': {
         'label': 'Storefront',
+        'children': {},
+    },
+    # The catalog of policy kinds (apps.policies). Carrier policies and
+    # certifications point at it; availability and agency contracts will too.
+    'policy_types': {
+        'label': 'Policy types',
+        'children': {},
+    },
+    # One agent certified for one policy type (apps.policies). Added from
+    # the agent's profile and from the policy type's row alike.
+    'certifications': {
+        'label': 'Certifications',
         'children': {},
     },
 }

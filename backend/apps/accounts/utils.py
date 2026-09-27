@@ -1,10 +1,11 @@
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.accounts.models import User, UserNote
+from apps.accounts.models import Role, RolePermission, User, UserNote
+from apps.accounts.models.roles import ACTIONS, PERMISSION_LABELS
 
 # Helpers the account views share. Checks that can reject a request live in
 # apps.accounts.validators instead.
@@ -116,3 +117,56 @@ def record_note(user, actor, kind, changes):
 def issue_tokens(user):
     refresh_token = RefreshToken.for_user(user)
     return {'access': str(refresh_token.access_token), 'refresh': str(refresh_token)}
+
+
+# Roles. Only superusers change them (see apps.accounts.validators.ensure_superuser).
+
+
+def roles_with_user_count():
+    """Every live role with how many live users hold it, plus its permission rows."""
+    return Role.objects.annotate(
+        user_count=Count('users', filter=Q(users__deleted_at__isnull=True), distinct=True)
+    ).prefetch_related('permissions')
+
+
+def get_role_or_404(pk):
+    return get_object_or_404(roles_with_user_count(), pk=pk)
+
+
+def search_roles(roles, search):
+    """Narrow `roles` to those whose name or description matches."""
+    return roles.filter(Q(name__icontains=search) | Q(description__icontains=search))
+
+
+def filter_roles(roles, is_active=None):
+    """Narrow `roles` by active status; None means no filter."""
+    if is_active is not None:
+        roles = roles.filter(is_active=is_active)
+    return roles
+
+
+def normalize_name(name):
+    return ' '.join(name.split())
+
+
+def save_role(role, actor, **fields):
+    """Set `fields` on the role and record `actor` as updated_by."""
+    for name, value in fields.items():
+        setattr(role, name, value)
+    role.updated_by = actor
+    role.save(update_fields=[*fields, 'updated_by'])
+    return role
+
+
+def set_role_permissions(role, permissions, actor):
+    """Replace the role's permissions: one row per module in the catalog, with
+    the flags sent for it or none at all when it was left out."""
+    sent = {permission['module']: permission for permission in permissions}
+    for module in PERMISSION_LABELS:
+        flags = {f'can_{action}': bool(sent.get(module, {}).get(f'can_{action}', False)) for action in ACTIONS}
+        RolePermission.objects.update_or_create(
+            role=role,
+            module=module,
+            defaults={**flags, 'updated_by': actor},
+            create_defaults={**flags, 'created_by': actor, 'updated_by': actor},
+        )

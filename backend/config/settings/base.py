@@ -35,6 +35,7 @@ LOCAL_APPS = [
     'apps.contracts',
     'apps.requests',
     'apps.storefront',
+    'apps.policies',
 ]
 
 THIRD_PARTY_APPS = [

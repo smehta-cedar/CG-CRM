@@ -81,6 +81,9 @@ All under `/api/v1/`. Everything except `auth/login/` requires
 | GET | `contracts/{id}/notes/` · `contracts/notes/` | `contracts` view |
 | GET | `users/{id}/notes/` · `users/notes/` | `users` view |
 | GET | `roles/` | `users` view |
+| GET | `roles/modules/` | superuser |
+| POST | `roles/create/` | superuser |
+| GET, PATCH, DELETE | `roles/{id}/` | `users` view · superuser · superuser |
 | GET | `requests/` | `requests` view |
 | POST | `requests/create/` · `requests/merch/` | `requests` create |
 | GET, PATCH, DELETE | `requests/{id}/` | `requests` view · update · delete |
@@ -89,6 +92,18 @@ All under `/api/v1/`. Everything except `auth/login/` requires
 | POST | `storefront/products/create/` | `storefront` create |
 | GET, PATCH, DELETE | `storefront/products/{id}/` | `storefront` view · update · delete |
 | GET | `storefront/products/{id}/notes/` | `storefront` view |
+| GET | `policy-types/` | `policy_types` view |
+| POST | `policy-types/create/` | `policy_types` create |
+| GET, PATCH, DELETE | `policy-types/{id}/` | `policy_types` view · update · delete |
+| GET | `policy-types/{id}/notes/` | `policy_types` view |
+| GET | `carrier-policies/` | `carriers` view |
+| POST | `carrier-policies/create/` | `carriers` create |
+| GET, PATCH, DELETE | `carrier-policies/{id}/` | `carriers` view · update · delete |
+| GET | `carrier-policies/{id}/notes/` | `carriers` view |
+| GET | `certifications/` | `certifications` view |
+| POST | `certifications/create/` | `certifications` create |
+| GET, PATCH, DELETE | `certifications/{id}/` | `certifications` view · update · delete |
+| GET | `certifications/{id}/notes/` | `certifications` view |
 
 `GET /agencies/` takes `?search=` (name, alias, NPN, email, phone) and
 `?is_active=`, plus `?page=` / `?page_size=`.
@@ -116,6 +131,42 @@ of licensed states with their numbers: a listed state keeps its row with the
 number as given, an unlisted one loses its row, a new one gets an active row
 starting today and running two years. NPN is unique among live agents.
 
+`GET /policy-types/` (the catalog of policy kinds, `apps.policies`: its own
+entity, not a carrier's line of business) takes `?search=` (name),
+`?is_active=` and `?certification_required=`, plus paging; rows come back by
+name. A policy type is a `name` (unique among live rows, ignoring case) and
+a `certification_required` flag (default false: the board's "certification
+required"). Change notes as for carriers, with the flag shown as `yes` /
+`no`; `policy-types/{id}/notes/` lists them newest first. State and county
+availability, agency contracts and agent certifications are not built yet;
+they will point at this catalog.
+
+`GET /carrier-policies/` (one named policy a carrier offers, also in
+`apps.policies`; guarded by the `carriers` permission, since a policy lives
+on its carrier) takes `?search=` (name), `?carrier=`, `?policy_type=` and
+`?is_active=`, plus paging; rows come back by name and carry `carrier` and
+`policy_type` summaries. A policy has a `carrier`, a `policy_type` from the
+catalog, a `name` (unique among that carrier's live policies, ignoring case;
+two carriers may share a name) and `available_states`, the codes where it
+can be sold. Every state must be on the carrier's own `available_states`;
+one that is not is a 400 naming the state. Empty means nowhere, never every
+state. The carrier cannot change on PATCH. Change notes as for carriers,
+listing name, policy type (by name), carrier (by name), available states
+and status; `carrier-policies/{id}/notes/` lists them newest first.
+
+`GET /certifications/` (one agent certified for one policy type, also in
+`apps.policies`, with its own `certifications` permission module) takes
+`?agent=` and `?policy_type=`, plus paging; rows come back by policy type
+name then agent name and carry `agent` and `policy_type` summaries. A
+certification has an `agent`, a `policy_type` from the catalog, optional
+`start_date` / `end_date` (null when unset; when both are set the end is on
+or after the start, else a 400 under `end_date`) and a status. One live row
+per agent and policy type; a deleted pair can be added again. A duplicate
+pair is a 400 under `policy_type` on create and whenever `policy_type` was
+sent on PATCH, otherwise under `agent`. Change notes as for carriers,
+listing agent (by name), policy type (by name), start date, end date and
+status; `certifications/{id}/notes/` lists them newest first.
+
 `GET /passwords/` (carrier portal logins, one per agent + carrier) takes
 `?search=` (username, agent name, carrier name), `?agent_id=`, `?carrier_id=`
 and `?status=` (active / pending / inactive), plus paging; rows come back by
@@ -133,7 +184,18 @@ The writing number is unique within a carrier when set (ignoring case).
 `users/` gained change notes: every create, update that changed something,
 block / unblock and password set writes one (the password only as
 `"redacted": true`), read at `users/{id}/notes/` or all at once at
-`users/notes/`. `roles/` lists the live roles a user can be given.
+`users/notes/`.
+
+`GET /roles/` lists every live role with its `permissions` (one row per
+module with `can_view` / `can_create` / `can_update` / `can_delete`) and a
+`user_count`; it takes `?search=` (name, description) and `?is_active=`, and
+is not paginated. Only a superuser may create, update or delete a role;
+`roles/modules/` lists the modules (the `MODULES` catalog in
+`apps/accounts/models/roles.py`) a role can be granted. On create and update
+`permissions` is the full set: a module left out gets no access, and create,
+update or delete on a module also needs view. Deleting is refused while any
+live user still holds the role. The frontend's Roles page is shown to
+superusers only.
 
 Seed everything from the frontend's JSON, in this order (passwords and
 contracts refer to agents and carriers):

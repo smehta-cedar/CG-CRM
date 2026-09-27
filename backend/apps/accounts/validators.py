@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
-from apps.accounts.models import User
+from apps.accounts.models import Role, User
 
 # Every check the account views run. Each one returns nothing when the check
 # passes and raises when it fails:
@@ -60,3 +60,28 @@ def ensure_current_password(user, current_password):
 def ensure_password_changed(current_password, new_password):
     if current_password == new_password:
         raise ValidationError({'new_password': ['New password must be different from the current one.']})
+
+
+# Roles.
+
+
+def ensure_superuser(actor, message='Only a superuser can manage roles.'):
+    if not actor.is_superuser:
+        raise PermissionDenied(message)
+
+
+def ensure_role_name_free(name, exclude=None):
+    """Live role names are unique, ignoring case. `exclude` is the role being renamed."""
+    roles = Role.objects.filter(name__iexact=name)
+    if exclude is not None:
+        roles = roles.exclude(pk=exclude.pk)
+    if roles.exists():
+        raise ValidationError({'name': ['A role with this name already exists.']})
+
+
+def ensure_role_unassigned(role):
+    """A role still held by live users cannot be deleted; reassign them first."""
+    count = role.users.count()
+    if count:
+        noun = 'user' if count == 1 else 'users'
+        raise ValidationError({'non_field_errors': [f'{count} {noun} still have this role. Reassign them first.']})

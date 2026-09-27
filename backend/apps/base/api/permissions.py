@@ -41,3 +41,13 @@ def module_permission(module, actions=None):
         (ModulePermission,),
         {'module': module, 'actions': {**METHOD_ACTIONS, **(actions or {})}},
     )
+
+
+class IsSuperuser(BasePermission):
+    """Superusers only, whatever their role; for managing roles themselves."""
+
+    message = 'Only a superuser can manage roles.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and user.is_active and user.is_superuser)

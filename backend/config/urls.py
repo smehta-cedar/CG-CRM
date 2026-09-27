@@ -50,6 +50,9 @@ urlpatterns = [
     # Storefront: storefront/catalog/ (public) and storefront/products/
     path('api/v1/', include('apps.storefront.urls')),
 
+    # Policies: policy-types/, carrier-policies/ and certifications/
+    path('api/v1/', include('apps.policies.urls')),
+
     # OpenAPI schema + browsable docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path(
