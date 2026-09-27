@@ -92,7 +92,7 @@ class AgentCreateTests(AgentAPITestCase):
         fields = [change['field'] for change in note.changes]
         self.assertEqual(
             fields,
-            ['name', 'aliases', 'status', 'npn', 'email', 'phone', 'personal_email', 'address', 'licensed_states', 'license_numbers'],
+            ['name', 'aliases', 'status', 'npn', 'email', 'phone', 'personal_email', 'address', 'licensed_states', 'license_numbers', 'license_dates'],
         )
         by_field = {change['field']: change['to'] for change in note.changes}
         self.assertEqual(by_field['address'], '1420 Cedar Grove Ln, Austin, TX 78704')
@@ -183,12 +183,16 @@ class AgentDetailTests(AgentAPITestCase):
         self.assertTrue(AgentStateLicense.all_objects.filter(agent=agent, state__code='FL', deleted_at__isnull=False).exists())
         note = agent.notes.get()
         self.assertEqual(
-            note.changes,
+            note.changes[:2],
             [
                 {'field': 'licensed_states', 'from': 'FL, TX', 'to': 'CA, TX'},
                 {'field': 'license_numbers', 'from': 'FL W482913, TX 2104587', 'to': 'CA C1, TX 999'},
             ],
         )
+        # The new CA row's dates are on the note too; TX's are unchanged.
+        self.assertEqual(note.changes[2]['field'], 'license_dates')
+        self.assertEqual(note.changes[2]['from'], 'FL 2024-01-01 to 2026-01-01, TX 2024-01-01 to 2026-01-01')
+        self.assertTrue(note.changes[2]['to'].endswith(', TX 2024-01-01 to 2026-01-01'))
 
     def test_patch_sets_license_lines_and_records_note(self):
         agent = make_agent(licenses=[{'state': 'TX', 'license_number': '2104587', 'life': True}])
@@ -218,6 +222,51 @@ class AgentDetailTests(AgentAPITestCase):
         )
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual([(row['life'], row['health']) for row in response.data['data']['licenses']], [(False, False)])
+
+    def test_license_dates_are_kept_defaulted_and_noted(self):
+        agent = make_agent(licenses=[{'state': 'TX', 'license_number': '2104587'}])
+        response = self.client.patch(
+            self.detail_url(agent),
+            {
+                'licenses': [
+                    # Dates sent: the kept row takes them.
+                    {'state': 'TX', 'license_number': '2104587', 'start_date': '2025-03-01', 'end_date': '2027-03-01'},
+                    # Only a start date: the new row's end defaults two years on from it.
+                    {'state': 'FL', 'license_number': 'W1', 'start_date': '2025-06-15'},
+                    # No dates: today and two years on, as before.
+                    {'state': 'CA', 'license_number': 'C1'},
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row['state']: row for row in response.data['data']['licenses']}
+        self.assertEqual((rows['TX']['start_date'], rows['TX']['end_date']), ('2025-03-01', '2027-03-01'))
+        self.assertEqual((rows['FL']['start_date'], rows['FL']['end_date']), ('2025-06-15', '2027-06-15'))
+        self.assertEqual(rows['CA']['start_date'], date.today().isoformat())
+        self.assertEqual(rows['CA']['end_date'][:4], str(date.today().year + 2))
+        note = agent.notes.get()
+        dates = next(change for change in note.changes if change['field'] == 'license_dates')
+        self.assertEqual(dates['from'], 'TX 2024-01-01 to 2026-01-01')
+        self.assertTrue(dates['to'].startswith('CA '))
+        self.assertIn('FL 2025-06-15 to 2027-06-15', dates['to'])
+        self.assertIn('TX 2025-03-01 to 2027-03-01', dates['to'])
+
+        # A kept row sent without dates keeps the ones it has.
+        response = self.client.patch(
+            self.detail_url(agent), {'licenses': [{'state': 'TX', 'license_number': '2104587'}]}, format='json'
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['licenses'][0]['start_date'], '2025-03-01')
+
+    def test_rejects_end_date_before_start_date(self):
+        response = self.client.post(
+            self.create_url(),
+            {**SAMPLE, 'licenses': [{'state': 'TX', 'start_date': '2026-01-01', 'end_date': '2025-01-01'}]},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('licenses', response.data['errors'])
 
     def test_patch_without_change_writes_no_note(self):
         agent = make_agent()

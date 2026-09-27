@@ -93,6 +93,24 @@ class LicenseInputSerializer(serializers.Serializer):
     license_number = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
     life = serializers.BooleanField(required=False, default=False, help_text='Covers life insurance.')
     health = serializers.BooleanField(required=False, default=False, help_text='Covers health insurance.')
+    start_date = serializers.DateField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text='YYYY-MM-DD. Left out: today for a new row, unchanged for a kept one.',
+    )
+    end_date = serializers.DateField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text='YYYY-MM-DD. Left out: two years on for a new row, unchanged for a kept one.',
+    )
+
+    def validate(self, data):
+        start, end = data.get('start_date'), data.get('end_date')
+        if start and end and end < start:
+            raise serializers.ValidationError({'end_date': ['The end date must be on or after the start date.']})
+        return data
 
 
 def _aliases_field():
@@ -117,7 +135,7 @@ def _licenses_field():
     return serializers.ListField(
         child=LicenseInputSerializer(),
         required=False,
-        help_text='The licensed states with their numbers; replaces the current set.',
+        help_text='The licensed states with their numbers, dates and lines; replaces the current set.',
     )
 
 

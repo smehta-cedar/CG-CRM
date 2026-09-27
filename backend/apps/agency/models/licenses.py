@@ -5,12 +5,16 @@ from apps.base.models import BaseModel
 from .agencies import Agency
 from .states import State
 
-# Same vocabulary as an agent's licence (apps.agents.models.LICENSE_STATUSES),
-# kept here so the agency app does not import the agents app.
+# An agent's licence (apps.agents.models.LICENSE_STATUSES) shares the first
+# three and JIT; the agency's form also offers applied, expired and
+# cancelled. Kept here so the agency app does not import the agents app.
 LICENSE_STATUSES = (
     ('active', 'Active'),
     ('review', 'Review'),
     ('pending', 'Pending'),
+    ('applied', 'Applied'),
+    ('expired', 'Expired'),
+    ('cancelled', 'Cancelled'),
     ('jit', 'JIT'),
 )
 

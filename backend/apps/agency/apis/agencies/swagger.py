@@ -32,7 +32,7 @@ agency_create = extend_schema(
     operation_id='agencies_create',
     tags=TAGS,
     summary='Create an agency',
-    description='Records an "added" note. `licenses` creates one active licence row per state, starting today and running two years.',
+    description='Records an "added" note. `licenses` creates one licence row per state: active unless a `status` is given, and starting today and running two years unless `start_date` / `end_date` are given.',
     request=AgencyCreateSerializer,
     responses={201: api_response(AgencySerializer), **error_responses(400, 401, 403)},
 )
@@ -49,7 +49,7 @@ agency_detail = combine_schemas(
         methods=['PATCH'],
         tags=TAGS,
         summary='Update an agency',
-        description='Records an "edited" note when something changed. `licenses` replaces the set of licensed states.',
+        description='Records an "edited" note when something changed. `licenses` replaces the set of licensed states; a row\'s `status`, `start_date` and `end_date` are set when given and kept when left out.',
         request=AgencyUpdateSerializer,
         responses={200: api_response(AgencySerializer), **error_responses(400, 401, 403, 404)},
     ),

@@ -175,8 +175,13 @@ goes in `frontend/.env.local` as `SHOP_API_PASSWORD`. A `PATCH` sets the
 status (pending / approved / denied) or the note.
 
 An agency carries `licenses` (state licence rows) exactly like an agent and
-takes `licenses` on create and update the same way; `agencies/{id}/notes/`
-lists its change notes.
+takes `licenses` on create and update the same way, except that each row
+also takes a `status` (active / pending / review / applied / expired /
+cancelled; jit is accepted too) and, like an agent's, a `start_date` and
+`end_date`: a new row is active and runs today to two years on unless they
+are given, and a kept row keeps whatever is left out or null. The change
+note lists `license_statuses` and `license_dates` alongside the states and
+numbers. `agencies/{id}/notes/` lists its change notes.
 
 `seed_users` sets passwords exactly as the file holds them, skipping the
 strength validators, and gives Admin every action on every module and Staff

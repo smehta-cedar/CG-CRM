@@ -10,7 +10,18 @@ from apps.agency.models import Agency, AgencyNote, AgencyStateLicense
 
 
 # The order a note lists changed fields in.
-NOTE_FIELDS = ('name', 'aliases', 'status', 'npn', 'email', 'phone', 'licensed_states', 'license_numbers')
+NOTE_FIELDS = (
+    'name',
+    'aliases',
+    'status',
+    'npn',
+    'email',
+    'phone',
+    'licensed_states',
+    'license_numbers',
+    'license_statuses',
+    'license_dates',
+)
 
 # How long a new licence runs from its start date, until the form asks for dates.
 LICENSE_TERM_YEARS = 2
@@ -79,34 +90,49 @@ def live_licenses(agency):
 
 
 def sync_licenses(agency, actor, wanted, today=None):
-    """Make the agency's licence rows match `wanted`, a list of (State, number).
+    """Make the agency's licence rows match `wanted`, a list of
+    (State, number, status, start_date, end_date).
 
-    A state already licensed keeps its row, with the number as given; a
-    state no longer listed loses its row (soft delete); a new state gets an
-    active row starting today and running LICENSE_TERM_YEARS. Statuses and
-    dates of kept rows are untouched.
+    A state already licensed keeps its row, with the number as given and the
+    status and dates as given (a None status or date leaves the row's
+    alone); a state no longer listed loses its row (soft delete); a new
+    state gets a row with the status given (active when None) and the dates
+    given, or starting today and running LICENSE_TERM_YEARS when they are
+    None.
     """
     today = today or date.today()
-    end = today.replace(year=today.year + LICENSE_TERM_YEARS)
-    wanted_by_state = {state.pk: (state, number.strip()) for state, number in wanted}
+    wanted_by_state = {
+        state.pk: (state, number.strip(), status, start, end) for state, number, status, start, end in wanted
+    }
 
     for row in list(agency.licenses.all()):
         if row.state_id not in wanted_by_state:
             row.delete(user=actor)
             continue
-        _, number = wanted_by_state.pop(row.state_id)
-        if number != row.license_number:
-            row.license_number = number
+        _, number, status, start, end = wanted_by_state.pop(row.state_id)
+        updates = {'license_number': number}
+        if status is not None:
+            updates['status'] = status
+        if start is not None:
+            updates['start_date'] = start
+        if end is not None:
+            updates['end_date'] = end
+        changed = [field for field, value in updates.items() if getattr(row, field) != value]
+        if changed:
+            for field in changed:
+                setattr(row, field, updates[field])
             row.updated_by = actor
-            row.save(update_fields=['license_number', 'updated_by'])
+            row.save(update_fields=[*changed, 'updated_by'])
 
-    for state, number in wanted_by_state.values():
+    for state, number, status, start, end in wanted_by_state.values():
+        start = start or today
+        end = end or start.replace(year=start.year + LICENSE_TERM_YEARS)
         AgencyStateLicense.objects.create(
             agency=agency,
             state=state,
             license_number=number,
-            status='active',
-            start_date=today,
+            status=status or 'active',
+            start_date=start,
             end_date=end,
             created_by=actor,
             updated_by=actor,
@@ -127,6 +153,14 @@ def snapshot(agency):
         'licensed_states': ', '.join(row.state.code for row in licenses),
         'license_numbers': ', '.join(
             f'{row.state.code} {row.license_number}' for row in licenses if row.license_number
+        ),
+        # "FL active, TX pending": every row.
+        'license_statuses': ', '.join(f'{row.state.code} {row.status}' for row in licenses),
+        # "TX 2026-01-01 to 2028-01-01": only the rows with a date.
+        'license_dates': ', '.join(
+            f'{row.state.code} {row.start_date or "?"} to {row.end_date or "?"}'
+            for row in licenses
+            if row.start_date or row.end_date
         ),
     }
 

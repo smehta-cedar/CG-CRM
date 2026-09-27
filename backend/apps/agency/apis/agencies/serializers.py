@@ -76,13 +76,38 @@ class AgencyNoteSerializer(serializers.ModelSerializer):
 class AgencyLicenseInputSerializer(serializers.Serializer):
     state = serializers.CharField(min_length=2, max_length=2, help_text='Two-letter state code.')
     license_number = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
+    status = serializers.ChoiceField(
+        choices=LICENSE_STATUSES,
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text='Left out or null: a new row is active and a kept row keeps its status.',
+    )
+    start_date = serializers.DateField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text='Left out or null: a new row starts today and a kept row keeps its date.',
+    )
+    end_date = serializers.DateField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text='Left out or null: a new row runs two years from its start and a kept row keeps its date.',
+    )
+
+    def validate(self, data):
+        start, end = data.get('start_date'), data.get('end_date')
+        if start and end and end < start:
+            raise serializers.ValidationError({'end_date': ['The end date must be on or after the start date.']})
+        return data
 
 
 def _licenses_field():
     return serializers.ListField(
         child=AgencyLicenseInputSerializer(),
         required=False,
-        help_text='The licensed states with their numbers; replaces the current set.',
+        help_text='The licensed states with their numbers, statuses and dates; replaces the current set.',
     )
 
 
