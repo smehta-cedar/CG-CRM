@@ -90,3 +90,18 @@ def ensure_dates_in_order(start_date, end_date):
     """When both dates are set, the end is on or after the start."""
     if start_date and end_date and end_date < start_date:
         raise ValidationError({'end_date': ['The end date must be on or after the start date.']})
+
+
+# A certification's PDF: the one file type the API takes, up to this size.
+MAX_CERTIFICATION_FILE_SIZE = 10 * 1024 * 1024
+
+
+def ensure_pdf(upload):
+    """The upload is a PDF (by name and by its first bytes) of at most 10 MB;
+    anything else is a 400 under "file"."""
+    if upload.size > MAX_CERTIFICATION_FILE_SIZE:
+        raise ValidationError({'file': ['The file must be 10 MB or smaller.']})
+    header = upload.read(5)
+    upload.seek(0)
+    if not upload.name.lower().endswith('.pdf') or header != b'%PDF-':
+        raise ValidationError({'file': ['The file must be a PDF.']})

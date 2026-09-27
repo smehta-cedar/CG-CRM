@@ -23,6 +23,7 @@ from apps.carriers.validators import (
     ensure_name_free,
     resolve_states,
 )
+from apps.contracts.utils import with_agent_access
 
 from . import swagger
 from .serializers import (
@@ -45,7 +46,8 @@ def carrier_list(request):
     query.is_valid(raise_exception=True)
     filters = query.validated_data
 
-    carriers = Carrier.objects.prefetch_related('available_states')
+    # agent_accessible in one query rather than one per carrier.
+    carriers = with_agent_access(Carrier.objects.prefetch_related('available_states'))
 
     search = filters.get('search')
     if search:

@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from apps.carriers.models import LINES_OF_BUSINESS, Carrier, CarrierNote
 from apps.carriers.utils import normalize_aliases, normalize_lines
+from apps.contracts.utils import is_agent_accessible
 
 
 class CarrierSerializer(serializers.ModelSerializer):
@@ -15,6 +16,12 @@ class CarrierSerializer(serializers.ModelSerializer):
         read_only=True,
         help_text='Two-letter state codes, in code order.',
     )
+    agent_accessible = serializers.SerializerMethodField(
+        help_text=(
+            "True only when the carrier's live agency contract has a contract number: "
+            'agents can be appointed to it and given a portal password there.'
+        ),
+    )
 
     class Meta:
         model = Carrier
@@ -24,11 +31,15 @@ class CarrierSerializer(serializers.ModelSerializer):
             'aliases',
             'lines_of_business',
             'available_states',
+            'agent_accessible',
             'is_active',
             'created_at',
             'updated_at',
         )
         read_only_fields = fields
+
+    def get_agent_accessible(self, carrier) -> bool:
+        return is_agent_accessible(carrier)
 
 
 class CarrierChangeSerializer(serializers.Serializer):

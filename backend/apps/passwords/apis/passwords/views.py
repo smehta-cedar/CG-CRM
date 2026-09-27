@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from apps.base.api.pagination import paginate
 from apps.base.api.permissions import module_permission
 from apps.base.api.response import APIResponse
+from apps.contracts.validators import ensure_carrier_accessible
 from apps.passwords.models import Password, PasswordNote
 from apps.passwords.utils import (
     diff_snapshots,
@@ -66,6 +67,7 @@ def password_create(request):
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
 
+    ensure_carrier_accessible(data['carrier'])
     ensure_pair_free(data['agent'], data['carrier'])
     ensure_password_not_blank(data['portal_password'])
 
@@ -103,6 +105,9 @@ def password_detail(request, pk):
         # The pair only has to be free when it is actually changing.
         agent = fields.get('agent', password.agent)
         carrier = fields.get('carrier', password.carrier)
+        # Moving to another carrier needs that carrier open to agents; keeping it doesn't.
+        if carrier != password.carrier:
+            ensure_carrier_accessible(carrier)
         if agent != password.agent or carrier != password.carrier:
             ensure_pair_free(agent, carrier, exclude=password)
 

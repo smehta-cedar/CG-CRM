@@ -83,10 +83,12 @@ class CertificationNoteInline(admin.TabularInline):
 
 @admin.register(Certification)
 class CertificationAdmin(admin.ModelAdmin):
-    list_display = ('agent', 'policy_type', 'start_date', 'end_date', 'is_active', 'created_at')
-    list_filter = ('is_active', 'policy_type')
+    list_display = ('agent', 'policy_type', 'start_date', 'end_date', 'is_verified', 'is_active', 'created_at')
+    list_filter = ('is_active', 'is_verified', 'policy_type')
     search_fields = ('agent__name', 'policy_type__name')
-    readonly_fields = AUDIT_FIELDS
+    # The PDF sits in private storage with no URL, so the admin shows its name only.
+    exclude = ('file',)
+    readonly_fields = ('file_name', *AUDIT_FIELDS)
     inlines = (CertificationNoteInline,)
 
 

@@ -53,6 +53,7 @@ db.sqlite3-journal
 # Uploaded / collected files
 media/
 mediafiles/
+private_media/
 staticfiles/
 static_root/
 

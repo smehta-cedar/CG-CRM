@@ -83,6 +83,12 @@ MODULES = {
         'label': 'Certifications',
         'children': {},
     },
+    # The agency's own contract with a carrier (apps.contracts). Shown on the
+    # agency profile; a carrier is open to agents once it has a number.
+    'agency_contracts': {
+        'label': 'Agency contracts',
+        'children': {},
+    },
 }
 
 ACTIONS = ('view', 'create', 'update', 'delete')

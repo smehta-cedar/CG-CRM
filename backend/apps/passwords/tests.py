@@ -2,8 +2,10 @@ from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Role, RolePermission, User
+from apps.agency.models import Agency
 from apps.agents.models import Agent
 from apps.carriers.models import Carrier
+from apps.contracts.models import AgencyCarrierContract
 
 from .models import Password, PasswordNote
 
@@ -22,6 +24,10 @@ class PasswordAPITestCase(APITestCase):
         self.other_agent = Agent.objects.create(name='James Carter', npn='2')
         self.carrier = Carrier.objects.create(name='Humana', lines_of_business=['MAPD'])
         self.other_carrier = Carrier.objects.create(name='UHC', lines_of_business=['MAPD'])
+        # Agents can only be given a carrier whose agency contract has a number.
+        self.agency = Agency.objects.create(name='Cedar Grove')
+        for carrier, number in ((self.carrier, 'A-1'), (self.other_carrier, 'A-2')):
+            AgencyCarrierContract.objects.create(agency=self.agency, carrier=carrier, contract_number=number)
         self.sample = {
             'agent_id': str(self.agent.pk),
             'carrier_id': str(self.carrier.pk),
@@ -161,6 +167,33 @@ class PasswordDetailTests(PasswordAPITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn('secret-value', str(response.data))
         self.assertTrue(response.data['data'][0]['changes'][0]['redacted'])
+
+
+class PasswordCarrierAccessTests(PasswordAPITestCase):
+    MESSAGE = ['Add a contract number before an agent can use this carrier.']
+
+    def test_rejects_carrier_whose_agency_contract_has_no_number(self):
+        AgencyCarrierContract.objects.filter(carrier=self.carrier).update(contract_number='')
+        response = self.client.post(self.create_url(), self.sample, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['errors']['carrier'], self.MESSAGE)
+
+    def test_edit_keeping_an_inaccessible_carrier_is_allowed(self):
+        password = self.make_password()
+        AgencyCarrierContract.objects.filter(carrier=self.carrier).delete()
+        response = self.client.patch(
+            self.detail_url(password),
+            {'carrier_id': str(self.carrier.pk), 'username': 'maria.a'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
+    def test_edit_moving_to_an_inaccessible_carrier_is_rejected(self):
+        password = self.make_password()
+        AgencyCarrierContract.objects.filter(carrier=self.other_carrier).update(contract_number='')
+        response = self.client.patch(self.detail_url(password), {'carrier_id': str(self.other_carrier.pk)}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['errors']['carrier'], self.MESSAGE)
 
 
 class PasswordPermissionTests(PasswordAPITestCase):

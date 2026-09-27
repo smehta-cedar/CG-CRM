@@ -1,6 +1,8 @@
 from django.db import transaction
+from django.http import FileResponse
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 
 from apps.base.api.pagination import paginate
@@ -11,15 +13,18 @@ from apps.policies.utils import (
     CERTIFICATION_NOTE_FIELDS,
     certification_queryset,
     certification_snapshot,
+    delete_file_on_commit,
     diff_snapshots,
     filter_certifications,
     get_certification_or_404,
     record_certification_note,
     save_certification,
+    upload_name,
 )
 from apps.policies.validators import (
     ensure_dates_in_order,
     ensure_pair_free,
+    ensure_pdf,
     resolve_agent,
     resolve_policy_type,
 )
@@ -72,6 +77,9 @@ def certification_create(request):
     start_date = data.get('start_date')
     end_date = data.get('end_date')
     ensure_dates_in_order(start_date, end_date)
+    upload = data.get('file')
+    if upload is not None:
+        ensure_pdf(upload)
 
     with transaction.atomic():
         certification = Certification.objects.create(
@@ -79,6 +87,9 @@ def certification_create(request):
             policy_type=policy_type,
             start_date=start_date,
             end_date=end_date,
+            is_verified=data.get('is_verified', False),
+            file=upload,
+            file_name=upload_name(upload) if upload is not None else '',
             is_active=data.get('is_active', True),
             created_by=request.user,
             updated_by=request.user,
@@ -135,9 +146,18 @@ def certification_detail(request, pk):
             fields.get('end_date', certification.end_date),
         )
 
+        # A new PDF replaces the stored one; no file in the request keeps it.
+        replaced = None
+        if 'file' in fields:
+            ensure_pdf(fields['file'])
+            fields['file_name'] = upload_name(fields['file'])
+            replaced = certification.file.name or None
+
         before = certification_snapshot(certification)
         with transaction.atomic():
             save_certification(certification, request.user, **fields)
+            if replaced:
+                delete_file_on_commit(certification.file, replaced)
             record_certification_note(
                 certification,
                 request.user,
@@ -159,3 +179,18 @@ def certification_notes(request, pk):
     # Newest first (the model's ordering). Not paginated: a certification has a handful.
     notes = certification.notes.select_related('created_by')
     return APIResponse(CertificationNoteSerializer(notes, many=True).data, 'Certification notes fetched successfully.')
+
+
+@swagger.certification_file
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, CAN_MANAGE_CERTIFICATIONS])
+def certification_file(request, pk):
+    certification = get_certification_or_404(pk)
+    if not certification.file:
+        raise NotFound('This certification has no file.')
+    try:
+        handle = certification.file.open('rb')
+    except FileNotFoundError:
+        raise NotFound('This certification has no file.')
+    # The stored name is random; the download carries the name it was uploaded with.
+    return FileResponse(handle, as_attachment=True, filename=certification.file_name, content_type='application/pdf')

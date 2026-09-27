@@ -1,7 +1,12 @@
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.shortcuts import get_object_or_404
 
-from apps.contracts.models import CarrierContract, CarrierContractNote
+from apps.contracts.models import (
+    AgencyCarrierContract,
+    AgencyCarrierContractNote,
+    CarrierContract,
+    CarrierContractNote,
+)
 
 # Helpers the contract views share. Checks that can reject a request live in
 # apps.contracts.validators instead.
@@ -72,14 +77,93 @@ def diff_snapshots(before, after):
     return changes
 
 
-def record_note(contract, actor, kind, changes):
+def record_note(contract, actor, kind, changes, note_model=CarrierContractNote):
     """Append a change note. Nothing is written when there are no changes."""
     if not changes:
         return None
-    return CarrierContractNote.objects.create(
+    return note_model.objects.create(
         contract=contract,
         kind=kind,
         changes=changes,
         created_by=actor,
         updated_by=actor,
     )
+
+
+# --- agency contracts -------------------------------------------------------
+
+# The order an agency contract note lists changed fields in. The password is
+# never among them.
+AGENCY_NOTE_FIELDS = ('carrier', 'contract_number', 'policies', 'username', 'status')
+
+
+def numbered_agency_contracts():
+    """Live agency contracts that have a contract number: the ones that open
+    their carrier to agents."""
+    return AgencyCarrierContract.objects.exclude(contract_number='')
+
+
+def with_agent_access(carriers):
+    """`carriers` annotated with agent_accessible: true only when the carrier's
+    live agency contract has a contract number."""
+    return carriers.annotate(
+        agent_accessible=Exists(numbered_agency_contracts().filter(carrier=OuterRef('pk')))
+    )
+
+
+def is_agent_accessible(carrier):
+    """Whether agents can be given `carrier` (appointments, portal passwords)."""
+    annotated = getattr(carrier, 'agent_accessible', None)
+    if annotated is not None:
+        return annotated
+    return numbered_agency_contracts().filter(carrier=carrier).exists()
+
+
+def agency_contract_queryset():
+    return AgencyCarrierContract.objects.select_related('agency', 'carrier').prefetch_related('policies')
+
+
+def get_agency_contract_or_404(pk):
+    return get_object_or_404(agency_contract_queryset(), pk=pk)
+
+
+def save_agency_contract(contract, actor, policies=None, **fields):
+    """Set `fields` on the contract, replace its policies when `policies` is
+    given, and record `actor` as updated_by."""
+    for name, value in fields.items():
+        setattr(contract, name, value)
+    contract.updated_by = actor
+    contract.save(update_fields=[*fields, 'updated_by'])
+    if policies is not None:
+        contract.policies.set(policies)
+    return contract
+
+
+def agency_snapshot(contract):
+    """The contract's fields as a note shows them: the carrier by name,
+    policies as names joined with ", ", the status as active / inactive.
+    No password."""
+    return {
+        'carrier': contract.carrier.name,
+        'contract_number': contract.contract_number,
+        'policies': ', '.join(contract.policy_names),
+        'username': contract.username,
+        'status': 'active' if contract.is_active else 'inactive',
+    }
+
+
+def diff_agency_snapshots(before, after):
+    """Fields whose shown value differs, in AGENCY_NOTE_FIELDS order.
+    `before` is {} for a new contract, so only its filled fields are listed."""
+    changes = []
+    for field in AGENCY_NOTE_FIELDS:
+        from_value = before.get(field, '')
+        to_value = after.get(field, '')
+        if from_value != to_value:
+            changes.append({'field': field, 'from': from_value, 'to': to_value})
+    return changes
+
+
+def record_agency_note(contract, actor, kind, changes):
+    """Append a change note. Nothing is written when there are no changes."""
+    return record_note(contract, actor, kind, changes, note_model=AgencyCarrierContractNote)

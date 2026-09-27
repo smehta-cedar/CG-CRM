@@ -17,6 +17,7 @@ from apps.contracts.utils import (
     snapshot,
 )
 from apps.contracts.validators import (
+    ensure_carrier_accessible,
     ensure_pair_free,
     ensure_within_ceiling,
     ensure_writing_number_free,
@@ -73,6 +74,7 @@ def contract_create(request):
 
     agent, carrier = data['agent'], data['carrier']
     writing_number = data.get('writing_number', '').strip()
+    ensure_carrier_accessible(carrier)
     ensure_pair_free(agent, carrier)
     ensure_writing_number_free(writing_number, carrier)
     states = resolve_states(data.get('appointed_states', []))
@@ -110,6 +112,9 @@ def contract_detail(request, pk):
 
         agent = fields.get('agent', contract.agent)
         carrier = fields.get('carrier', contract.carrier)
+        # Moving to another carrier needs that carrier open to agents; keeping it doesn't.
+        if carrier != contract.carrier:
+            ensure_carrier_accessible(carrier)
         # The pair only has to be free when it is actually changing.
         if agent != contract.agent or carrier != contract.carrier:
             ensure_pair_free(agent, carrier, exclude=contract)

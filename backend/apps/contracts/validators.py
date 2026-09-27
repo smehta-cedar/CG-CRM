@@ -1,7 +1,10 @@
 from rest_framework.exceptions import ValidationError
 
-from apps.agency.models import State
-from apps.contracts.models import CarrierContract
+from apps.agency.models import Agency, State
+from apps.carriers.models import Carrier
+from apps.contracts.models import AgencyCarrierContract, CarrierContract
+from apps.contracts.utils import is_agent_accessible
+from apps.policies.models import CarrierPolicy
 
 # Every check the contract views run. Each one returns nothing when the check
 # passes and raises ValidationError (400, field errors under "errors").
@@ -67,3 +70,62 @@ def ensure_within_ceiling(states, agent, carrier):
                 f"Add {them} to their licensed states on Agents first."
             ]
         })
+
+
+def ensure_carrier_accessible(carrier):
+    """Agents can only be given a carrier whose live agency contract has a
+    contract number. Shared by the appointment and password APIs."""
+    if not is_agent_accessible(carrier):
+        raise ValidationError({'carrier': ['Add a contract number before an agent can use this carrier.']})
+
+
+# --- agency contracts -------------------------------------------------------
+
+
+def resolve_agency(pk):
+    """The live agency with `pk`; an unknown one is a 400 under "agency"."""
+    agency = Agency.objects.filter(pk=pk).first()
+    if agency is None:
+        raise ValidationError({'agency': ['Unknown agency.']})
+    return agency
+
+
+def resolve_carrier(pk):
+    """The live carrier with `pk`; an unknown one is a 400 under "carrier"."""
+    carrier = Carrier.objects.filter(pk=pk).first()
+    if carrier is None:
+        raise ValidationError({'carrier': ['Unknown carrier.']})
+    return carrier
+
+
+def ensure_carrier_free(carrier, exclude=None):
+    """One live agency contract per carrier."""
+    contracts = AgencyCarrierContract.objects.filter(carrier=carrier)
+    if exclude is not None:
+        contracts = contracts.exclude(pk=exclude.pk)
+    if contracts.exists():
+        raise ValidationError({'carrier': [f'{carrier.name} already has an agency contract.']})
+
+
+def resolve_policies(pks, carrier):
+    """The live CarrierPolicy rows for `pks`. Unknown ones and ones another
+    carrier offers are a 400 under "policies"."""
+    wanted = set(pks)
+    policies = list(CarrierPolicy.objects.filter(pk__in=wanted))
+    if len(policies) != len(wanted):
+        raise ValidationError({'policies': ['Unknown policy.']})
+    foreign = sorted(policy.name for policy in policies if policy.carrier_id != carrier.pk)
+    if foreign:
+        verb = 'is not a' if len(foreign) == 1 else 'are not'
+        noun = 'policy' if len(foreign) == 1 else 'policies'
+        raise ValidationError({'policies': [f"{', '.join(foreign)} {verb} {carrier.name} {noun}."]})
+    return policies
+
+
+def ensure_login_pair(username, password):
+    """The agency's login at the carrier: both blank or both set. The error
+    sits under the blank one."""
+    if username and not password:
+        raise ValidationError({'password': ['Enter the password for this username, or clear both.']})
+    if password and not username:
+        raise ValidationError({'username': ['Enter the username for this password, or clear both.']})

@@ -10,6 +10,9 @@ class CertificationSerializer(serializers.ModelSerializer):
 
     agent = AgentSummarySerializer(read_only=True)
     policy_type = PolicyTypeSummarySerializer(read_only=True)
+    file_name = serializers.SerializerMethodField(
+        help_text='The uploaded PDF name, or null when there is none. Download it from /certifications/{id}/file/.'
+    )
 
     class Meta:
         model = Certification
@@ -19,11 +22,16 @@ class CertificationSerializer(serializers.ModelSerializer):
             'policy_type',
             'start_date',
             'end_date',
+            'is_verified',
+            'file_name',
             'is_active',
             'created_at',
             'updated_at',
         )
         read_only_fields = fields
+
+    def get_file_name(self, certification) -> str | None:
+        return certification.file_name if certification.file else None
 
 
 class CertificationChangeSerializer(serializers.Serializer):
@@ -60,11 +68,20 @@ def _date_field():
     return serializers.DateField(required=False, allow_null=True)
 
 
+def _file_field():
+    return serializers.FileField(
+        required=False,
+        help_text='A PDF of at most 10 MB, sent as multipart form data. Replaces the stored file; leave it out to keep it.',
+    )
+
+
 class CertificationCreateSerializer(serializers.Serializer):
     agent = serializers.UUIDField()
     policy_type = serializers.UUIDField(help_text='A row from the policy type catalog.')
     start_date = _date_field()
     end_date = _date_field()
+    is_verified = serializers.BooleanField(required=False)
+    file = _file_field()
     is_active = serializers.BooleanField(required=False)
 
 
@@ -76,6 +93,8 @@ class CertificationUpdateSerializer(serializers.Serializer):
     policy_type = serializers.UUIDField(required=False)
     start_date = _date_field()
     end_date = _date_field()
+    is_verified = serializers.BooleanField(required=False)
+    file = _file_field()
     is_active = serializers.BooleanField(required=False)
 
 

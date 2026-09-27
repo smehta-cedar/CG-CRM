@@ -1,3 +1,6 @@
+import os
+
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 
 from apps.policies.models import (
@@ -157,7 +160,7 @@ def record_policy_note(policy, actor, kind, changes):
 # --- certifications ---------------------------------------------------------
 
 # The order a certification note lists changed fields in.
-CERTIFICATION_NOTE_FIELDS = ('agent', 'policy_type', 'start_date', 'end_date', 'status')
+CERTIFICATION_NOTE_FIELDS = ('agent', 'policy_type', 'start_date', 'end_date', 'is_verified', 'status', 'file')
 
 
 def certification_queryset():
@@ -188,15 +191,30 @@ def save_certification(certification, actor, **fields):
 
 def certification_snapshot(certification):
     """The certification's fields as a note shows them: the agent and policy
-    type by name, dates as YYYY-MM-DD or blank, the status as "active" /
-    "inactive". Compare two of these to find what changed."""
+    type by name, dates as YYYY-MM-DD or blank, the verified flag as "yes" /
+    "no", the status as "active" / "inactive", the PDF by its file name only
+    (blank when there is none). Compare two of these to find what changed."""
     return {
         'agent': certification.agent.name,
         'policy_type': certification.policy_type.name,
         'start_date': certification.start_date.isoformat() if certification.start_date else '',
         'end_date': certification.end_date.isoformat() if certification.end_date else '',
+        'is_verified': 'yes' if certification.is_verified else 'no',
         'status': 'active' if certification.is_active else 'inactive',
+        'file': certification.file_name if certification.file else '',
     }
+
+
+def upload_name(upload):
+    """The name a file was uploaded with, as `file_name` stores it."""
+    return os.path.basename(upload.name)[:255]
+
+
+def delete_file_on_commit(field_file, name):
+    """Remove the stored file `name` once the transaction commits, e.g. the
+    PDF a new upload just replaced."""
+    storage = field_file.storage
+    transaction.on_commit(lambda: storage.delete(name))
 
 
 def record_certification_note(certification, actor, kind, changes):

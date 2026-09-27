@@ -1,9 +1,18 @@
+import uuid
+
 from django.db import models
 
 from apps.agents.models import Agent
 from apps.base.models import BaseModel
+from apps.base.storage import PrivateStorage
 
 from .policy_types import PolicyType
+
+
+def certification_file_path(certification, filename):
+    """A random name under certifications/; the name the user uploaded is
+    kept in `file_name`."""
+    return f'certifications/{uuid.uuid4().hex}.pdf'
 
 
 class Certification(BaseModel):
@@ -17,12 +26,20 @@ class Certification(BaseModel):
     `start_date` and `end_date` are optional; when both are set the end is
     on or after the start (the API enforces that). `is_active` (from
     BaseModel) is the certification's status; it starts on.
+
+    `file` is an optional PDF kept in private storage (never served by URL;
+    GET /certifications/{id}/file/ hands it out), and `file_name` is the
+    name it was uploaded with. A new upload replaces the old file.
+    `is_verified` is set by hand; uploading a file does not set it.
     """
 
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='certifications')
     policy_type = models.ForeignKey(PolicyType, on_delete=models.PROTECT, related_name='certifications')
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
+    file = models.FileField(storage=PrivateStorage(), upload_to=certification_file_path, blank=True)
+    file_name = models.CharField(max_length=255, blank=True)
+    is_verified = models.BooleanField(default=False)
 
     class Meta(BaseModel.Meta):
         constraints = [

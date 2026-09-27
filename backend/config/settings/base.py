@@ -114,6 +114,12 @@ USE_TZ = True
 
 
 
+# Private uploads (certification PDFs). Never served by URL: only API views
+# that check permissions read them (apps.base.storage.PrivateStorage).
+
+PRIVATE_MEDIA_ROOT = BASE_DIR / 'private_media'
+
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
