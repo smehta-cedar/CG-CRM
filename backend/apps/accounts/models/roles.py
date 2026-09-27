@@ -37,6 +37,14 @@ MODULES = {
         'label': 'Carriers',
         'children': {},
     },
+    'agents': {
+        'label': 'Agents',
+        'children': {},
+    },
+    'passwords': {
+        'label': 'Passwords',
+        'children': {},
+    },
 }
 
 ACTIONS = ('view', 'create', 'update', 'delete')

@@ -30,6 +30,8 @@ LOCAL_APPS = [
     'apps.accounts',
     'apps.agency',
     'apps.carriers',
+    'apps.agents',
+    'apps.passwords',
 ]
 
 THIRD_PARTY_APPS = [

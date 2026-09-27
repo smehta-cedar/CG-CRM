@@ -35,6 +35,12 @@ urlpatterns = [
     # Carriers: carriers/
     path('api/v1/', include('apps.carriers.urls')),
 
+    # Agents: agents/
+    path('api/v1/', include('apps.agents.urls')),
+
+    # Passwords: passwords/
+    path('api/v1/', include('apps.passwords.urls')),
+
     # OpenAPI schema + browsable docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path(

@@ -66,6 +66,14 @@ All under `/api/v1/`. Everything except `auth/login/` requires
 | POST | `carriers/create/` | `carriers` create |
 | GET, PATCH, DELETE | `carriers/{id}/` | `carriers` view · update · delete |
 | GET | `carriers/{id}/notes/` | `carriers` view |
+| GET | `agents/` | `agents` view |
+| POST | `agents/create/` | `agents` create |
+| GET, PATCH, DELETE | `agents/{id}/` | `agents` view · update · delete |
+| GET | `agents/{id}/notes/` | `agents` view |
+| GET | `passwords/` | `passwords` view |
+| POST | `passwords/create/` | `passwords` create |
+| GET, PATCH, DELETE | `passwords/{id}/` | `passwords` view · update · delete |
+| GET | `passwords/{id}/notes/` | `passwords` view |
 
 `GET /agencies/` takes `?search=` (name, alias, NPN, email, phone) and
 `?is_active=`, plus `?page=` / `?page_size=`.
@@ -82,6 +90,31 @@ frontend's seed file with:
 ```bash
 python manage.py seed_carriers            # frontend/data/carriers.json
 python manage.py seed_carriers --file path/to/carriers.json
+```
+
+`GET /agents/` takes `?search=` (name, alias, NPN, email, phone), `?is_active=`
+and `?state=` (licensed there), plus paging; rows come back by name. An agent
+carries `address` (all four parts or `null`) and `licenses`, its state licence
+rows (`state`, `license_number`, `status` of active / review / pending / jit,
+`start_date`, `end_date`). On create and update, `licenses` is the full set
+of licensed states with their numbers: a listed state keeps its row with the
+number as given, an unlisted one loses its row, a new one gets an active row
+starting today and running two years. NPN is unique among live agents.
+
+`GET /passwords/` (carrier portal logins, one per agent + carrier) takes
+`?search=` (username, agent name, carrier name), `?agent_id=`, `?carrier_id=`
+and `?status=` (active / pending / inactive), plus paging; rows come back by
+agent name then carrier name and carry `agent` and `carrier` summaries. The
+portal password is returned as stored; its change notes only ever say it was
+set or changed (`"redacted": true`).
+
+Seed both from the frontend's JSON, carriers first (passwords refer to agents
+and carriers):
+
+```bash
+python manage.py seed_carriers
+python manage.py seed_agents              # agents.json + agent-state-licenses.json
+python manage.py seed_passwords           # passwords.json, matched by NPN and carrier name
 ```
 
 `GET /permissions/` returns the catalog grouped `Module → Resource → Actions`
