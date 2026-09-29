@@ -8,7 +8,8 @@ class Agent(BaseModel):
     """A licensed insurance agent under the agency, e.g. "Maria Alva".
 
     Email and phone are the work contact; the personal_* and address_*
-    columns are the agent's own, all optional. Licensed states live on
+    columns are the agent's own, all optional, as are the dates and
+    ssn_last4. Licensed states live on
     AgentStateLicense rows (one per state). Writing numbers live on carrier
     contracts and portal logins on passwords, not here.
 
@@ -30,6 +31,14 @@ class Agent(BaseModel):
     address_city = models.CharField(max_length=100, blank=True)
     address_state = models.CharField(max_length=2, blank=True, help_text='Two-letter USPS code.')
     address_zip = models.CharField(max_length=10, blank=True)
+
+    date_of_birth = models.DateField(null=True, blank=True)
+    # When they joined the agency.
+    join_date = models.DateField(null=True, blank=True)
+    # Employment start; not a licence's start_date.
+    start_date = models.DateField(null=True, blank=True)
+    # Only ever the last four digits of the SSN, never the full number.
+    ssn_last4 = models.CharField('SSN (last 4)', max_length=4, blank=True)
 
     class Meta(BaseModel.Meta):
         constraints = [

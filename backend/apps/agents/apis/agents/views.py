@@ -101,6 +101,10 @@ def agent_create(request):
             phone=data.get('phone', '').strip(),
             personal_email=normalize_email(data.get('personal_email', '')),
             personal_phone=data.get('personal_phone', '').strip(),
+            date_of_birth=data.get('date_of_birth'),
+            join_date=data.get('join_date'),
+            start_date=data.get('start_date'),
+            ssn_last4=data.get('ssn_last4', ''),
             is_active=data.get('is_active', True),
             created_by=request.user,
             updated_by=request.user,
@@ -146,6 +150,8 @@ def agent_detail(request, pk):
         for field in ('phone', 'personal_phone'):
             if field in fields:
                 fields[field] = fields[field].strip()
+
+        # date_of_birth, join_date, start_date and ssn_last4 go in as validated.
 
         if 'address' in fields:
             fields.update(_address_columns(fields.pop('address')))

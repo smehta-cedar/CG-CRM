@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from apps.base.api.pagination import paginate
 from apps.base.api.permissions import module_permission
 from apps.base.api.response import APIResponse
+from apps.notifications.services import notify_admins_of_request
 from apps.requests.models import Request
 from apps.requests.validators import ensure_fields_for_type, resolve_state
 from apps.storefront.validators import ensure_order_fits
@@ -69,6 +70,7 @@ def request_create(request):
         created_by=request.user,
         updated_by=request.user,
     )
+    notify_admins_of_request(filed, request.user)
     return APIResponse(RequestSerializer(filed).data, 'Request filed successfully.', status=status.HTTP_201_CREATED)
 
 

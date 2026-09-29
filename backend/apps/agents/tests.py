@@ -147,6 +147,72 @@ class AgentCreateTests(AgentAPITestCase):
         self.assertEqual(response.status_code, 201, response.data)
 
 
+class AgentPersonalFieldTests(AgentAPITestCase):
+    PERSONAL = {'date_of_birth': '1980-05-17', 'join_date': '2024-02-01', 'start_date': '2024-03-01', 'ssn_last4': '1234'}
+
+    def test_create_saves_and_returns_them(self):
+        response = self.client.post(self.create_url(), {**SAMPLE, **self.PERSONAL}, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        data = response.data['data']
+        for field, value in self.PERSONAL.items():
+            self.assertEqual(data[field], value)
+        agent = Agent.objects.get(pk=data['id'])
+        self.assertEqual(agent.date_of_birth, date(1980, 5, 17))
+        self.assertEqual(agent.ssn_last4, '1234')
+
+    def test_left_out_they_are_empty(self):
+        response = self.client.post(self.create_url(), SAMPLE, format='json')
+        data = response.data['data']
+        self.assertIsNone(data['date_of_birth'])
+        self.assertIsNone(data['join_date'])
+        self.assertIsNone(data['start_date'])
+        self.assertEqual(data['ssn_last4'], '')
+
+    def test_patch_sets_and_clears_them(self):
+        agent = make_agent()
+        response = self.client.patch(self.detail_url(agent), self.PERSONAL, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['start_date'], '2024-03-01')
+        # Partial: a later patch of one field leaves the others alone.
+        response = self.client.patch(self.detail_url(agent), {'join_date': None, 'ssn_last4': ''}, format='json')
+        data = response.data['data']
+        self.assertIsNone(data['join_date'])
+        self.assertEqual(data['ssn_last4'], '')
+        self.assertEqual(data['date_of_birth'], '1980-05-17')
+        self.assertEqual(data['start_date'], '2024-03-01')
+
+    def test_rejects_anything_but_four_digits_for_ssn(self):
+        for value in ('123', '12345', '123-45-6789', 'abcd'):
+            response = self.client.post(self.create_url(), {**SAMPLE, 'ssn_last4': value}, format='json')
+            self.assertEqual(response.status_code, 400, value)
+            self.assertIn('ssn_last4', response.data['errors'])
+        self.assertFalse(Agent.objects.exists())
+
+    def test_rejects_bad_dates(self):
+        agent = make_agent()
+        for field in ('date_of_birth', 'join_date', 'start_date'):
+            for value in ('05/17/1980', '2024-13-01', 'soon'):
+                response = self.client.patch(self.detail_url(agent), {field: value}, format='json')
+                self.assertEqual(response.status_code, 400, (field, value))
+                self.assertIn(field, response.data['errors'])
+
+    def test_notes_list_dates_and_mask_the_ssn(self):
+        response = self.client.post(self.create_url(), {**SAMPLE, **self.PERSONAL}, format='json')
+        agent = Agent.objects.get(pk=response.data['data']['id'])
+        added = {change['field']: change for change in agent.notes.get().changes}
+        self.assertEqual(added['date_of_birth']['to'], '1980-05-17')
+        self.assertEqual(added['start_date']['to'], '2024-03-01')
+        self.assertEqual(added['ssn_last4'], {'field': 'ssn_last4', 'from': '', 'to': '••••'})
+
+        # A new SSN is noted as changed, with neither value shown.
+        self.client.patch(self.detail_url(agent), {'ssn_last4': '5678'}, format='json')
+        edited = agent.notes.filter(kind='edited').get()
+        self.assertEqual(edited.changes, [{'field': 'ssn_last4', 'from': '••••', 'to': '••••'}])
+        for note in agent.notes.all():
+            self.assertNotIn('1234', str(note.changes))
+            self.assertNotIn('5678', str(note.changes))
+
+
 class AgentListTests(AgentAPITestCase):
     def test_lists_by_name(self):
         make_agent(name='Zed', npn='2', aliases=[], licenses=[])

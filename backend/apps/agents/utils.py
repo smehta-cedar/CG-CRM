@@ -19,11 +19,19 @@ NOTE_FIELDS = (
     'personal_email',
     'personal_phone',
     'address',
+    'date_of_birth',
+    'join_date',
+    'start_date',
+    'ssn_last4',
     'licensed_states',
     'license_numbers',
     'license_lines',
     'license_dates',
 )
+
+# Fields a note records as changed without their values.
+MASKED_NOTE_FIELDS = ('ssn_last4',)
+NOTE_MASK = '••••'
 
 # How long a new licence runs from its start date when the form sends no end date.
 LICENSE_TERM_YEARS = 2
@@ -182,6 +190,11 @@ def snapshot(agent):
         'personal_email': agent.personal_email,
         'personal_phone': agent.personal_phone,
         'address': address_text(agent),
+        'date_of_birth': str(agent.date_of_birth or ''),
+        'join_date': str(agent.join_date or ''),
+        'start_date': str(agent.start_date or ''),
+        # The real digits, so a change is seen; diff_snapshots masks them.
+        'ssn_last4': agent.ssn_last4,
         'licensed_states': ', '.join(row.state.code for row in licenses),
         'license_numbers': ', '.join(
             f'{row.state.code} {row.license_number}' for row in licenses if row.license_number
@@ -201,12 +214,16 @@ def snapshot(agent):
 
 def diff_snapshots(before, after):
     """Fields whose shown value differs, in NOTE_FIELDS order.
-    `before` is {} for a new agent, so only its filled fields are listed."""
+    `before` is {} for a new agent, so only its filled fields are listed.
+    A MASKED_NOTE_FIELDS value is written as NOTE_MASK, or "" when blank."""
     changes = []
     for field in NOTE_FIELDS:
         from_value = before.get(field, '')
         to_value = after.get(field, '')
         if from_value != to_value:
+            if field in MASKED_NOTE_FIELDS:
+                from_value = NOTE_MASK if from_value else ''
+                to_value = NOTE_MASK if to_value else ''
             changes.append({'field': field, 'from': from_value, 'to': to_value})
     return changes
 

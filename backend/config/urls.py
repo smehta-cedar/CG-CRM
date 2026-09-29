@@ -53,6 +53,9 @@ urlpatterns = [
     # Policies: policy-types/, carrier-policies/ and certifications/
     path('api/v1/', include('apps.policies.urls')),
 
+    # Notifications: notifications/ (the signed-in user's own)
+    path('api/v1/', include('apps.notifications.urls')),
+
     # OpenAPI schema + browsable docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path(

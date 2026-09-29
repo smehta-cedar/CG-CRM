@@ -46,6 +46,10 @@ class AgentSerializer(serializers.ModelSerializer):
             'personal_email',
             'personal_phone',
             'address',
+            'date_of_birth',
+            'join_date',
+            'start_date',
+            'ssn_last4',
             'licenses',
             'is_active',
             'created_at',
@@ -146,6 +150,16 @@ class _AgentWriteSerializer(serializers.Serializer):
     personal_email = serializers.EmailField(required=False, allow_blank=True)
     personal_phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     address = AddressSerializer(required=False, allow_null=True)
+    date_of_birth = serializers.DateField(required=False, allow_null=True, help_text='YYYY-MM-DD.')
+    join_date = serializers.DateField(required=False, allow_null=True, help_text='YYYY-MM-DD. When they joined the agency.')
+    start_date = serializers.DateField(required=False, allow_null=True, help_text='YYYY-MM-DD. Employment start.')
+    ssn_last4 = serializers.RegexField(
+        r'^\d{4}$',
+        required=False,
+        allow_blank=True,
+        help_text='The last four digits of the SSN only.',
+        error_messages={'invalid': 'Enter only the last 4 digits of the SSN.'},
+    )
     licenses = _licenses_field()
     is_active = serializers.BooleanField(required=False)
 

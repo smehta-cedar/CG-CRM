@@ -36,6 +36,7 @@ LOCAL_APPS = [
     'apps.requests',
     'apps.storefront',
     'apps.policies',
+    'apps.notifications',
 ]
 
 THIRD_PARTY_APPS = [
