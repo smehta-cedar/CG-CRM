@@ -7,27 +7,30 @@ from apps.passwords.models import Password, PasswordNote
 # apps.passwords.validators instead.
 
 # The order a note lists changed fields in. "password" is recorded redacted.
-NOTE_FIELDS = ('agent', 'carrier', 'username', 'password', 'status')
+NOTE_FIELDS = ('agent', 'carrier', 'username', 'password', 'link', 'status')
 REDACTED_FIELDS = ('password',)
 
 
 def get_password_or_404(pk):
-    return get_object_or_404(Password.objects.select_related('agent', 'carrier'), pk=pk)
+    return get_object_or_404(Password.objects.select_related('agent', 'agency', 'carrier'), pk=pk)
 
 
 def search_passwords(passwords, search):
-    """Narrow `passwords` to those whose username, agent or carrier name matches."""
+    """Narrow `passwords` to those whose username, agent, agency or carrier name matches."""
     return passwords.filter(
         Q(username__icontains=search)
         | Q(agent__name__icontains=search)
+        | Q(agency__name__icontains=search)
         | Q(carrier__name__icontains=search)
     )
 
 
-def filter_passwords(passwords, agent_id=None, carrier_id=None, status=None):
-    """Narrow `passwords` by agent, carrier and status; None means no filter."""
+def filter_passwords(passwords, agent_id=None, agency_id=None, carrier_id=None, status=None):
+    """Narrow `passwords` by agent, agency, carrier and status; None means no filter."""
     if agent_id is not None:
         passwords = passwords.filter(agent_id=agent_id)
+    if agency_id is not None:
+        passwords = passwords.filter(agency_id=agency_id)
     if carrier_id is not None:
         passwords = passwords.filter(carrier_id=carrier_id)
     if status:
@@ -45,13 +48,15 @@ def save_password(password, actor, **fields):
 
 
 def snapshot(password):
-    """The password's fields as a note compares them: agent and carrier by
-    name. The portal password is compared but never written to a note."""
+    """The password's fields as a note compares them: the agent (or the
+    agency) and carrier by name. The portal password is compared but never
+    written to a note."""
     return {
-        'agent': password.agent.name,
+        'agent': password.party.name,
         'carrier': password.carrier.name,
         'username': password.username,
         'password': password.portal_password,
+        'link': password.link,
         'status': password.status,
     }
 

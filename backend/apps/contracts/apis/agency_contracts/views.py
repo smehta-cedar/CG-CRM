@@ -17,10 +17,9 @@ from apps.contracts.utils import (
 )
 from apps.contracts.validators import (
     ensure_carrier_free,
-    ensure_login_pair,
     resolve_agency,
     resolve_carrier,
-    resolve_policies,
+    resolve_policy_types,
 )
 
 from . import swagger
@@ -33,11 +32,6 @@ from .serializers import (
 )
 
 CAN_MANAGE_AGENCY_CONTRACTS = module_permission('agency_contracts')
-
-
-def _clean_password(password):
-    """Spaces alone count as blank; anything else is kept as typed."""
-    return password if password.strip() else ''
 
 
 @swagger.agency_contract_list
@@ -72,23 +66,18 @@ def agency_contract_create(request):
     agency = resolve_agency(data['agency'])
     carrier = resolve_carrier(data['carrier'])
     ensure_carrier_free(carrier)
-    policies = resolve_policies(data.get('policies', []), carrier)
-    username = data.get('username', '').strip()
-    password = _clean_password(data.get('password', ''))
-    ensure_login_pair(username, password)
+    policy_types = resolve_policy_types(data.get('policy_types', []))
 
     with transaction.atomic():
         contract = AgencyCarrierContract.objects.create(
             agency=agency,
             carrier=carrier,
             contract_number=data.get('contract_number', ''),
-            username=username,
-            password=password,
             is_active=data.get('is_active', True),
             created_by=request.user,
             updated_by=request.user,
         )
-        contract.policies.set(policies)
+        contract.policy_types.set(policy_types)
         contract = get_agency_contract_or_404(contract.pk)
         # The note lists every filled field, as the contract now reads.
         record_agency_note(
@@ -129,24 +118,14 @@ def agency_contract_detail(request, pk):
         if carrier != contract.carrier:
             ensure_carrier_free(carrier, exclude=contract)
 
-        # Policies are re-checked whenever they or the carrier change, so a
-        # contract never covers another carrier's policy.
-        policies = None
-        if 'policies' in fields:
-            policies = resolve_policies(fields.pop('policies'), carrier)
-        elif carrier != contract.carrier:
-            resolve_policies([policy.pk for policy in contract.policies.all()], carrier)
-
-        if 'username' in fields:
-            fields['username'] = fields['username'].strip()
-        if 'password' in fields:
-            fields['password'] = _clean_password(fields['password'])
-        ensure_login_pair(fields.get('username', contract.username), fields.get('password', contract.password))
+        policy_types = None
+        if 'policy_types' in fields:
+            policy_types = resolve_policy_types(fields.pop('policy_types'))
 
         before = agency_snapshot(contract)
         with transaction.atomic():
-            save_agency_contract(contract, request.user, policies=policies, **fields)
-            # Read the policies again for the note and the response.
+            save_agency_contract(contract, request.user, policy_types=policy_types, **fields)
+            # Read the policy types again for the note and the response.
             contract = get_agency_contract_or_404(pk)
             record_agency_note(
                 contract,

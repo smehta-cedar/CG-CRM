@@ -3,31 +3,28 @@ from django.db import models
 from apps.agency.models import Agency
 from apps.base.models import BaseModel
 from apps.carriers.models import Carrier
-from apps.policies.models import CarrierPolicy
+from apps.policies.models import PolicyType
 
 
 class AgencyCarrierContract(BaseModel):
-    """The agency's own contract with one carrier: the contracting number,
-    the carrier policies it covers and the agency's login at that carrier.
+    """The agency's own contract with one carrier: the contracting number and
+    the policy types (catalog entries) it covers. The agency's login at the
+    carrier is an agency password (apps.passwords), not part of the contract.
     Commissions and assigning policies to agents are not modelled here.
 
     One live contract per carrier; a deleted one can be replaced. A carrier
     is open to agents (appointments, portal passwords) only once its live
     contract has a contract number: blank means "not yet".
 
-    `policies` must all belong to `carrier` (the API enforces it); empty
-    means none. `username` and `password` are both blank or both set; the
-    password is stored as entered so it can be shown and copied, and never
-    written into a note. `is_active` (from BaseModel) is the contract's
-    status; it starts on.
+    `policy_types` are the kinds of policy the agency sells under this
+    contract; empty means none. `is_active` (from BaseModel) is the
+    contract's status; it starts on.
     """
 
     agency = models.ForeignKey(Agency, on_delete=models.CASCADE, related_name='carrier_contracts')
     carrier = models.ForeignKey(Carrier, on_delete=models.CASCADE, related_name='agency_contracts')
     contract_number = models.CharField(max_length=50, blank=True)
-    policies = models.ManyToManyField(CarrierPolicy, blank=True, related_name='agency_contracts')
-    username = models.CharField(max_length=255, blank=True)
-    password = models.CharField(max_length=255, blank=True)
+    policy_types = models.ManyToManyField(PolicyType, blank=True, related_name='agency_contracts')
 
     class Meta(BaseModel.Meta):
         constraints = [
@@ -44,11 +41,10 @@ class AgencyCarrierContract(BaseModel):
         return f'{self.agency} @ {self.carrier}'
 
     @property
-    def policy_names(self):
-        """Covered policy names, in name order."""
-        return sorted((policy.name for policy in self.policies.all()), key=str.lower)
+    def policy_type_names(self):
+        """Covered policy type names, in name order."""
+        return sorted((policy_type.name for policy_type in self.policy_types.all()), key=str.lower)
 
     def save(self, *args, **kwargs):
         self.contract_number = self.contract_number.strip()
-        self.username = self.username.strip()
         super().save(*args, **kwargs)

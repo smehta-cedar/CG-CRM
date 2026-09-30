@@ -4,7 +4,7 @@ from apps.agency.models import Agency
 from apps.contracts.models import AgencyCarrierContract, AgencyCarrierContractNote
 # One schema component for the carrier's {id, name, is_active} summary.
 from apps.passwords.apis.passwords.serializers import CarrierSummarySerializer
-from apps.policies.models import CarrierPolicy
+from apps.policies.models import PolicyType
 
 
 class AgencySummarySerializer(serializers.ModelSerializer):
@@ -13,19 +13,18 @@ class AgencySummarySerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'is_active')
 
 
-class CarrierPolicySummarySerializer(serializers.ModelSerializer):
+class PolicyTypeSummarySerializer(serializers.ModelSerializer):
     class Meta:
-        model = CarrierPolicy
+        model = PolicyType
         fields = ('id', 'name', 'is_active')
 
 
 class AgencyContractSerializer(serializers.ModelSerializer):
-    """How an agency contract appears in every response. The password is
-    included: the profile's edit dialog shows it."""
+    """How an agency contract appears in every response."""
 
     agency = AgencySummarySerializer(read_only=True)
     carrier = CarrierSummarySerializer(read_only=True)
-    policies = serializers.SerializerMethodField(help_text='Covered carrier policies, in name order.')
+    policy_types = serializers.SerializerMethodField(help_text='Covered policy types, in name order.')
 
     class Meta:
         model = AgencyCarrierContract
@@ -34,18 +33,16 @@ class AgencyContractSerializer(serializers.ModelSerializer):
             'agency',
             'carrier',
             'contract_number',
-            'policies',
-            'username',
-            'password',
+            'policy_types',
             'is_active',
             'created_at',
             'updated_at',
         )
         read_only_fields = fields
 
-    def get_policies(self, contract) -> list[dict]:
-        policies = sorted(contract.policies.all(), key=lambda policy: policy.name.lower())
-        return CarrierPolicySummarySerializer(policies, many=True).data
+    def get_policy_types(self, contract) -> list[dict]:
+        policy_types = sorted(contract.policy_types.all(), key=lambda policy_type: policy_type.name.lower())
+        return PolicyTypeSummarySerializer(policy_types, many=True).data
 
 
 class AgencyContractChangeSerializer(serializers.Serializer):
@@ -78,26 +75,19 @@ class AgencyContractNoteSerializer(serializers.ModelSerializer):
         return user.full_name if user else None
 
 
-def _policies_field():
+def _policy_types_field():
     return serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
-        help_text="The carrier's policies this contract covers. Empty means none.",
+        help_text='The policy types this contract covers. Empty means none.',
     )
-
-
-def _login_field():
-    # Not trimmed: spaces can matter in a password. The view strips the username.
-    return serializers.CharField(max_length=255, required=False, allow_blank=True, trim_whitespace=False)
 
 
 class AgencyContractCreateSerializer(serializers.Serializer):
     agency = serializers.UUIDField()
     carrier = serializers.UUIDField(help_text='One live agency contract per carrier.')
     contract_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
-    policies = _policies_field()
-    username = _login_field()
-    password = _login_field()
+    policy_types = _policy_types_field()
     is_active = serializers.BooleanField(required=False)
 
 
@@ -107,9 +97,7 @@ class AgencyContractUpdateSerializer(serializers.Serializer):
     agency = serializers.UUIDField(required=False)
     carrier = serializers.UUIDField(required=False)
     contract_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
-    policies = _policies_field()
-    username = _login_field()
-    password = _login_field()
+    policy_types = _policy_types_field()
     is_active = serializers.BooleanField(required=False)
 
 

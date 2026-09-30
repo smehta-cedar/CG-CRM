@@ -17,9 +17,9 @@ class PasswordNoteInline(admin.TabularInline):
 
 @admin.register(Password)
 class PasswordAdmin(admin.ModelAdmin):
-    list_display = ('agent', 'carrier', 'username', 'status', 'created_at')
+    list_display = ('agent', 'agency', 'carrier', 'username', 'status', 'created_at')
     list_filter = ('status', 'carrier')
-    search_fields = ('agent__name', 'carrier__name', 'username')
+    search_fields = ('agent__name', 'agency__name', 'carrier__name', 'username')
     autocomplete_fields = ('agent', 'carrier')
     readonly_fields = AUDIT_FIELDS
     inlines = (PasswordNoteInline,)
@@ -29,5 +29,5 @@ class PasswordAdmin(admin.ModelAdmin):
 class PasswordNoteAdmin(admin.ModelAdmin):
     list_display = ('password', 'kind', 'created_at', 'created_by')
     list_filter = ('kind',)
-    search_fields = ('password__agent__name', 'password__carrier__name')
+    search_fields = ('password__agent__name', 'password__agency__name', 'password__carrier__name')
     readonly_fields = ('password', 'kind', 'changes', *AUDIT_FIELDS)

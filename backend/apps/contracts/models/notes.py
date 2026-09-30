@@ -38,8 +38,8 @@ class AgencyCarrierContractNote(BaseModel):
     every create and on every update that changed something. Append-only.
 
     `changes` is a list of {"field", "from", "to"} with display strings: the
-    carrier by name, policies as names joined with ", ", the status as
-    "active" / "inactive". The password is never recorded. `created_by`
+    carrier by name, policy types as names joined with ", ", the status as
+    "active" / "inactive". `created_by`
     (from BaseModel) is who made the change.
     """
 

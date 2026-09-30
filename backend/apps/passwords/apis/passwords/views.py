@@ -17,7 +17,7 @@ from apps.passwords.utils import (
     search_passwords,
     snapshot,
 )
-from apps.passwords.validators import ensure_pair_free, ensure_password_not_blank
+from apps.passwords.validators import ensure_one_party, ensure_pair_free, ensure_password_not_blank
 
 from . import swagger
 from .serializers import (
@@ -35,12 +35,12 @@ CAN_MANAGE_PASSWORDS = module_permission('passwords')
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, CAN_MANAGE_PASSWORDS])
 def password_list(request):
-    # Check the ?search=, ?agent_id=, ?carrier_id= and ?status= values; bad ones give a 400.
+    # Check the ?search=, ?agent_id=, ?agency_id=, ?carrier_id= and ?status= values; bad ones give a 400.
     query = PasswordListQuerySerializer(data=request.query_params.dict())
     query.is_valid(raise_exception=True)
     filters = query.validated_data
 
-    passwords = Password.objects.select_related('agent', 'carrier')
+    passwords = Password.objects.select_related('agent', 'agency', 'carrier')
 
     search = filters.get('search')
     if search:
@@ -49,6 +49,7 @@ def password_list(request):
     passwords = filter_passwords(
         passwords,
         agent_id=filters.get('agent_id'),
+        agency_id=filters.get('agency_id'),
         carrier_id=filters.get('carrier_id'),
         status=filters.get('status'),
     )
@@ -67,16 +68,23 @@ def password_create(request):
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
 
-    ensure_carrier_accessible(data['carrier'])
-    ensure_pair_free(data['agent'], data['carrier'])
+    agent = data.get('agent')
+    agency = data.get('agency')
+    ensure_one_party(agent, agency)
+    # An agent needs the carrier open to agents; the agency's own login doesn't.
+    if agent is not None:
+        ensure_carrier_accessible(data['carrier'])
+    ensure_pair_free(data['carrier'], agent=agent, agency=agency)
     ensure_password_not_blank(data['portal_password'])
 
     with transaction.atomic():
         password = Password.objects.create(
-            agent=data['agent'],
+            agent=agent,
+            agency=agency,
             carrier=data['carrier'],
             username=data['username'],
             portal_password=data['portal_password'],
+            link=data.get('link', ''),
             status=data.get('status', 'active'),
             created_by=request.user,
             updated_by=request.user,
@@ -102,14 +110,22 @@ def password_detail(request, pk):
         serializer.is_valid(raise_exception=True)
         fields = dict(serializer.validated_data)
 
-        # The pair only has to be free when it is actually changing.
-        agent = fields.get('agent', password.agent)
+        # Choosing an agent clears the agency, and the other way round.
+        if fields.get('agent') is not None:
+            fields['agency'] = None
+        if fields.get('agency') is not None:
+            fields['agent'] = None
+        agent = fields['agent'] if 'agent' in fields else password.agent
+        agency = fields['agency'] if 'agency' in fields else password.agency
         carrier = fields.get('carrier', password.carrier)
-        # Moving to another carrier needs that carrier open to agents; keeping it doesn't.
-        if carrier != password.carrier:
+        ensure_one_party(agent, agency)
+
+        # An agent at a carrier new to them needs it open to agents; keeping it doesn't.
+        if agent is not None and (carrier != password.carrier or password.agent is None):
             ensure_carrier_accessible(carrier)
-        if agent != password.agent or carrier != password.carrier:
-            ensure_pair_free(agent, carrier, exclude=password)
+        # The pair only has to be free when it is actually changing.
+        if (agent, agency, carrier) != (password.agent, password.agency, password.carrier):
+            ensure_pair_free(carrier, agent=agent, agency=agency, exclude=password)
 
         if 'portal_password' in fields:
             ensure_password_not_blank(fields['portal_password'])
@@ -120,7 +136,7 @@ def password_detail(request, pk):
             record_note(password, request.user, PasswordNote.KIND_EDITED, diff_snapshots(before, snapshot(password)))
         return APIResponse(PasswordSerializer(password).data, 'Password updated successfully.')
 
-    # DELETE: soft delete; the agent + carrier pair becomes free again.
+    # DELETE: soft delete; the agent (or agency) + carrier pair becomes free again.
     password.delete(user=request.user)
     return APIResponse(None, 'Password deleted successfully.')
 

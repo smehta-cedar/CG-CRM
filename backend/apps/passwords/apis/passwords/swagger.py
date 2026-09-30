@@ -23,7 +23,7 @@ password_list = extend_schema(
     operation_id='passwords_list',
     tags=TAGS,
     summary='List passwords',
-    description='Carrier portal logins, by agent name then carrier name.',
+    description="Carrier portal logins, agents' and the agency's own, by agent name then carrier name.",
     parameters=[PasswordListQuerySerializer, *PAGINATION_PARAMETERS],
     responses={200: api_response(PasswordSerializer, paginated=True), **error_responses(400, 401, 403)},
 )
@@ -33,7 +33,10 @@ password_create = extend_schema(
     operation_id='passwords_create',
     tags=TAGS,
     summary='Create a password',
-    description='One per agent at each carrier. Records an "added" note; the password only as "set".',
+    description=(
+        'For an agent (agent_id) or the agency (agency_id). One per agent at each carrier, and one for '
+        'the agency. Records an "added" note; the password only as "set".'
+    ),
     request=PasswordCreateSerializer,
     responses={201: api_response(PasswordSerializer), **error_responses(400, 401, 403)},
 )

@@ -4,7 +4,7 @@ from rest_framework.test import APITestCase
 from apps.accounts.models import Role, RolePermission, User
 from apps.agency.models import Agency
 from apps.carriers.models import Carrier
-from apps.policies.models import CarrierPolicy, PolicyType
+from apps.policies.models import PolicyType
 
 from .models import AgencyCarrierContract, AgencyCarrierContractNote
 
@@ -22,17 +22,13 @@ class AgencyContractAPITestCase(APITestCase):
         self.agency = Agency.objects.create(name='Cedar Grove')
         self.carrier = Carrier.objects.create(name='Humana', lines_of_business=['MAPD'])
         self.other_carrier = Carrier.objects.create(name='Aetna', lines_of_business=['MAPD'])
-        policy_type = PolicyType.objects.create(name='Medicare Advantage')
-        self.gold = CarrierPolicy.objects.create(carrier=self.carrier, policy_type=policy_type, name='Gold Plus HMO')
-        self.basic = CarrierPolicy.objects.create(carrier=self.carrier, policy_type=policy_type, name='Basic PPO')
-        self.foreign = CarrierPolicy.objects.create(carrier=self.other_carrier, policy_type=policy_type, name='Aetna Value')
+        self.advantage = PolicyType.objects.create(name='Medicare Advantage')
+        self.supplement = PolicyType.objects.create(name='Medicare Supplement')
         self.sample = {
             'agency': str(self.agency.pk),
             'carrier': str(self.carrier.pk),
             'contract_number': ' HUM-001 ',
-            'policies': [str(self.gold.pk), str(self.basic.pk)],
-            'username': 'cedar.grove',
-            'password': 'top secret',
+            'policy_types': [str(self.supplement.pk), str(self.advantage.pk)],
         }
 
     def make_contract(self, carrier=None, contract_number='', **fields):
@@ -54,13 +50,16 @@ class AgencyContractAPITestCase(APITestCase):
 
 
 class AgencyContractCreateTests(AgencyContractAPITestCase):
-    def test_creates_contract_and_added_note_without_password(self):
+    def test_creates_contract_and_added_note(self):
         response = self.client.post(self.create_url(), self.sample, format='json')
         self.assertEqual(response.status_code, 201, response.data)
         data = response.data['data']
         self.assertEqual(data['contract_number'], 'HUM-001')
-        self.assertEqual([policy['name'] for policy in data['policies']], ['Basic PPO', 'Gold Plus HMO'])
-        self.assertEqual(data['password'], 'top secret')
+        self.assertEqual(
+            [policy_type['name'] for policy_type in data['policy_types']],
+            ['Medicare Advantage', 'Medicare Supplement'],
+        )
+        self.assertNotIn('password', data)
         self.assertTrue(data['is_active'])
         note = AgencyCarrierContractNote.objects.get(contract_id=data['id'])
         self.assertEqual(note.kind, 'added')
@@ -69,21 +68,19 @@ class AgencyContractCreateTests(AgencyContractAPITestCase):
             [
                 {'field': 'carrier', 'from': '', 'to': 'Humana'},
                 {'field': 'contract_number', 'from': '', 'to': 'HUM-001'},
-                {'field': 'policies', 'from': '', 'to': 'Basic PPO, Gold Plus HMO'},
-                {'field': 'username', 'from': '', 'to': 'cedar.grove'},
+                {'field': 'policy_types', 'from': '', 'to': 'Medicare Advantage, Medicare Supplement'},
                 {'field': 'status', 'from': '', 'to': 'active'},
             ],
         )
-        self.assertNotIn('top secret', str(note.changes))
 
-    def test_blank_contract_number_and_no_policies_or_login_are_allowed(self):
+    def test_blank_contract_number_and_no_policy_types_are_allowed(self):
         response = self.client.post(
             self.create_url(),
             {'agency': str(self.agency.pk), 'carrier': str(self.carrier.pk), 'contract_number': ''},
             format='json',
         )
         self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(response.data['data']['policies'], [])
+        self.assertEqual(response.data['data']['policy_types'], [])
 
     def test_one_live_contract_per_carrier(self):
         self.make_contract()
@@ -95,28 +92,18 @@ class AgencyContractCreateTests(AgencyContractAPITestCase):
         self.make_contract().delete()
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 201)
 
-    def test_rejects_another_carriers_policy(self):
+    def test_rejects_unknown_policy_type(self):
         response = self.client.post(
-            self.create_url(), {**self.sample, 'policies': [str(self.foreign.pk)]}, format='json'
+            self.create_url(), {**self.sample, 'policy_types': [str(self.carrier.pk)]}, format='json'
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data['errors']['policies'], ['Aetna Value is not a Humana policy.'])
+        self.assertEqual(response.data['errors']['policy_types'], ['Unknown policy type.'])
 
-    def test_login_is_both_or_neither(self):
-        response = self.client.post(self.create_url(), {**self.sample, 'password': '  '}, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('password', response.data['errors'])
-        response = self.client.post(self.create_url(), {**self.sample, 'username': ''}, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('username', response.data['errors'])
-
-
-class AgencyContractDetailTests(AgencyContractAPITestCase):
-    def test_edit_note_lists_only_changes_and_never_the_password(self):
-        contract = self.make_contract(contract_number='X1', username='a', password='old')
+    def test_edit_note_lists_only_changes(self):
+        contract = self.make_contract(contract_number='X1')
         response = self.client.patch(
             self.detail_url(contract),
-            {'contract_number': '', 'password': 'new-secret', 'is_active': False},
+            {'contract_number': '', 'is_active': False},
             format='json',
         )
         self.assertEqual(response.status_code, 200, response.data)
@@ -128,18 +115,18 @@ class AgencyContractDetailTests(AgencyContractAPITestCase):
             ],
         )
 
-    def test_password_only_change_writes_no_note(self):
-        contract = self.make_contract(username='a', password='old')
-        response = self.client.patch(self.detail_url(contract), {'password': 'new'}, format='json')
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertFalse(contract.notes.exists())
-
-    def test_changing_carrier_rechecks_kept_policies(self):
+    def test_patch_replaces_policy_types_and_notes_it(self):
         contract = self.make_contract()
-        contract.policies.set([self.gold])
-        response = self.client.patch(self.detail_url(contract), {'carrier': str(self.other_carrier.pk)}, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('policies', response.data['errors'])
+        contract.policy_types.set([self.advantage])
+        response = self.client.patch(
+            self.detail_url(contract), {'policy_types': [str(self.supplement.pk)]}, format='json'
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([t['name'] for t in response.data['data']['policy_types']], ['Medicare Supplement'])
+        self.assertEqual(
+            contract.notes.get().changes,
+            [{'field': 'policy_types', 'from': 'Medicare Advantage', 'to': 'Medicare Supplement'}],
+        )
 
     def test_list_sorted_by_carrier_and_filtered(self):
         self.make_contract()

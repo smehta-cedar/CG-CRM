@@ -92,9 +92,10 @@ def record_note(contract, actor, kind, changes, note_model=CarrierContractNote):
 
 # --- agency contracts -------------------------------------------------------
 
-# The order an agency contract note lists changed fields in. The password is
-# never among them.
-AGENCY_NOTE_FIELDS = ('carrier', 'contract_number', 'policies', 'username', 'status')
+# The order an agency contract note lists changed fields in. Older notes may
+# also hold "policies" (carrier policies) and "username", from before policy
+# types and agency passwords.
+AGENCY_NOTE_FIELDS = ('carrier', 'contract_number', 'policy_types', 'status')
 
 
 def numbered_agency_contracts():
@@ -120,34 +121,32 @@ def is_agent_accessible(carrier):
 
 
 def agency_contract_queryset():
-    return AgencyCarrierContract.objects.select_related('agency', 'carrier').prefetch_related('policies')
+    return AgencyCarrierContract.objects.select_related('agency', 'carrier').prefetch_related('policy_types')
 
 
 def get_agency_contract_or_404(pk):
     return get_object_or_404(agency_contract_queryset(), pk=pk)
 
 
-def save_agency_contract(contract, actor, policies=None, **fields):
-    """Set `fields` on the contract, replace its policies when `policies` is
-    given, and record `actor` as updated_by."""
+def save_agency_contract(contract, actor, policy_types=None, **fields):
+    """Set `fields` on the contract, replace its policy types when
+    `policy_types` is given, and record `actor` as updated_by."""
     for name, value in fields.items():
         setattr(contract, name, value)
     contract.updated_by = actor
     contract.save(update_fields=[*fields, 'updated_by'])
-    if policies is not None:
-        contract.policies.set(policies)
+    if policy_types is not None:
+        contract.policy_types.set(policy_types)
     return contract
 
 
 def agency_snapshot(contract):
     """The contract's fields as a note shows them: the carrier by name,
-    policies as names joined with ", ", the status as active / inactive.
-    No password."""
+    policy types as names joined with ", ", the status as active / inactive."""
     return {
         'carrier': contract.carrier.name,
         'contract_number': contract.contract_number,
-        'policies': ', '.join(contract.policy_names),
-        'username': contract.username,
+        'policy_types': ', '.join(contract.policy_type_names),
         'status': 'active' if contract.is_active else 'inactive',
     }
 

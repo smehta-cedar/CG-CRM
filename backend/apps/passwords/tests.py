@@ -83,6 +83,20 @@ class PasswordCreateTests(PasswordAPITestCase):
             ],
         )
 
+    def test_saves_link_and_notes_it(self):
+        response = self.client.post(
+            self.create_url(), {**self.sample, 'link': 'https://agent.humana.com'}, format='json'
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['data']['link'], 'https://agent.humana.com')
+        note = PasswordNote.objects.get(password_id=response.data['data']['id'])
+        self.assertIn({'field': 'link', 'from': '', 'to': 'https://agent.humana.com'}, note.changes)
+
+    def test_rejects_invalid_link(self):
+        response = self.client.post(self.create_url(), {**self.sample, 'link': 'not a url'}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('link', response.data['errors'])
+
     def test_rejects_blank_password(self):
         response = self.client.post(self.create_url(), {**self.sample, 'portal_password': '   '}, format='json')
         self.assertEqual(response.status_code, 400)
@@ -121,6 +135,71 @@ class PasswordListTests(PasswordAPITestCase):
         self.assertEqual([p['agent']['name'] for p in response.data['data']], ['James Carter'])
         response = self.client.get(self.list_url(), {'search': 'maria'})
         self.assertEqual([p['agent']['name'] for p in response.data['data']], ['Maria Alva'])
+
+
+class AgencyPasswordTests(PasswordAPITestCase):
+    def agency_sample(self, **overrides):
+        return {
+            'agency_id': str(self.agency.pk),
+            'carrier_id': str(self.carrier.pk),
+            'username': 'cedar.agency',
+            'portal_password': 'agency-pass',
+            **overrides,
+        }
+
+    def test_creates_agency_password(self):
+        response = self.client.post(self.create_url(), self.agency_sample(), format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        data = response.data['data']
+        self.assertIsNone(data['agent'])
+        self.assertEqual(data['agency']['name'], 'Cedar Grove')
+        note = PasswordNote.objects.get(password_id=data['id'])
+        self.assertIn({'field': 'agent', 'from': '', 'to': 'Cedar Grove'}, note.changes)
+
+    def test_agency_password_needs_no_contract_number(self):
+        AgencyCarrierContract.objects.filter(carrier=self.carrier).update(contract_number='')
+        response = self.client.post(self.create_url(), self.agency_sample(), format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+
+    def test_rejects_second_agency_password_at_carrier(self):
+        self.client.post(self.create_url(), self.agency_sample(), format='json')
+        response = self.client.post(self.create_url(), self.agency_sample(username='other'), format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('carrier_id', response.data['errors'])
+
+    def test_agency_and_agent_can_share_a_carrier(self):
+        self.make_password()
+        response = self.client.post(self.create_url(), self.agency_sample(), format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+
+    def test_rejects_both_agent_and_agency(self):
+        response = self.client.post(
+            self.create_url(), self.agency_sample(agent_id=str(self.agent.pk)), format='json'
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('agent_id', response.data['errors'])
+
+    def test_rejects_neither_agent_nor_agency(self):
+        sample = {key: value for key, value in self.sample.items() if key != 'agent_id'}
+        response = self.client.post(self.create_url(), sample, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('agent_id', response.data['errors'])
+
+    def test_patch_moves_agent_password_to_agency(self):
+        password = self.make_password()
+        response = self.client.patch(
+            self.detail_url(password), {'agency_id': str(self.agency.pk)}, format='json'
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        password.refresh_from_db()
+        self.assertIsNone(password.agent)
+        self.assertEqual(password.agency, self.agency)
+
+    def test_list_filters_by_agency(self):
+        self.make_password()
+        self.make_password(agent=None, agency=self.agency, username='cedar.agency')
+        response = self.client.get(self.list_url(), {'agency_id': str(self.agency.pk)})
+        self.assertEqual([row['username'] for row in response.data['data']], ['cedar.agency'])
 
 
 class PasswordDetailTests(PasswordAPITestCase):

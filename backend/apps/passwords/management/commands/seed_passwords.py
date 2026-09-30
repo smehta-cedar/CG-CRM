@@ -53,6 +53,7 @@ class Command(BaseCommand):
                 fields = {
                     'username': row['username'],
                     'portal_password': row.get('portalPassword', ''),
+                    'link': row.get('link', ''),
                     'status': status if status in KNOWN_STATUSES else 'active',
                 }
                 _, was_created = Password.objects.update_or_create(agent=agent, carrier=carrier, defaults=fields)

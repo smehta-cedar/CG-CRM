@@ -54,7 +54,7 @@ class AgencyCarrierContractAdmin(admin.ModelAdmin):
     list_filter = ('is_active',)
     search_fields = ('carrier__name', 'agency__name', 'contract_number')
     autocomplete_fields = ('agency', 'carrier')
-    filter_horizontal = ('policies',)
+    filter_horizontal = ('policy_types',)
     readonly_fields = AUDIT_FIELDS
     inlines = (AgencyCarrierContractNoteInline,)
 
