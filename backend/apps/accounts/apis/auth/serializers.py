@@ -42,6 +42,52 @@ class LoginSerializer(TokenObtainPairSerializer):
         return user is not None and user.check_password(password)
 
 
+class AgentCodeRequestSerializer(serializers.Serializer):
+    """The work email to send a one-time sign-in code to."""
+
+    email = serializers.EmailField(write_only=True)
+
+
+class AgentLoginSerializer(serializers.Serializer):
+    """Work email and the one-time code emailed to it in; a token pair and the user out.
+
+    There is no password. A wrong email or code is the same answer, so the
+    form cannot tell which one failed.
+
+        400 invalid              a field is missing or the email is not an email
+        401 invalid_credentials  unknown email, or a wrong, used or expired code
+        403 account_blocked      right code, but the agent is inactive
+        403 staff_account        the email belongs to a staff account
+    """
+
+    email = serializers.EmailField(write_only=True)
+    code = serializers.CharField(write_only=True, trim_whitespace=True, allow_blank=False)
+
+    def validate(self, attrs):
+        from django.contrib.auth.models import update_last_login
+
+        from apps.accounts.utils import agent_for_email, issue_tokens, user_for_agent, verify_agent_code
+
+        agent = agent_for_email(attrs['email'])
+        if agent is None or not verify_agent_code(agent, attrs['code']):
+            raise AuthenticationFailed('Incorrect email or code.', 'invalid_credentials')
+        if not agent.is_active:
+            raise PermissionDenied(
+                'Your account is blocked. Please contact an administrator.',
+                'account_blocked',
+            )
+
+        user = user_for_agent(agent)
+        if not user.is_active:
+            raise PermissionDenied(
+                'Your account is blocked. Please contact an administrator.',
+                'account_blocked',
+            )
+        update_last_login(None, user)
+        tokens = issue_tokens(user)
+        return {**tokens, 'user': UserSerializer(user).data}
+
+
 class RefreshSerializer(TokenRefreshSerializer):
     def validate(self, attrs):
         try:

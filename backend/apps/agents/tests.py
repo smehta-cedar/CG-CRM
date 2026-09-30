@@ -369,6 +369,25 @@ class AgentDetailTests(AgentAPITestCase):
         self.assertEqual(response.data['data'][0]['created_by'], 'Admin')
 
 
+class AgentWorkEmailTests(AgentAPITestCase):
+    def test_work_email_cannot_belong_to_another_agent(self):
+        make_agent()
+        response = self.client.post(
+            self.create_url(),
+            {'name': 'Other Agent', 'npn': '10000002', 'email': SAMPLE['email']},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(SAMPLE['email'], response.data['errors']['email'][0])
+
+    def test_changing_to_another_agents_email_is_refused(self):
+        make_agent()
+        other = make_agent(name='Other Agent', npn='10000002', email='other@example.com')
+        response = self.client.patch(self.detail_url(other), {'email': SAMPLE['email']}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('email', response.data['errors'])
+
+
 class AgentPermissionTests(AgentAPITestCase):
     def setUp(self):
         self.staff = User.objects.create_user(email='staff@example.com', password='Sup3r-secret!', full_name='Staff')

@@ -40,6 +40,8 @@ LOCAL_APPS = [
 ]
 
 THIRD_PARTY_APPS = [
+    'django_otp',
+    'django_otp.plugins.otp_email',
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',  # enables logout / refresh rotation
@@ -149,6 +151,23 @@ REST_FRAMEWORK = {
         'auth': '10/minute',
     },
 }
+
+
+# Email
+# https://docs.djangoproject.com/en/5.2/topics/email/
+
+# Who agents' sign-in codes come from. EMAIL_BACKEND is set per environment.
+DEFAULT_FROM_EMAIL = 'Cedar Grove CRM <no-reply@cedargroveseniorhealth.com>'
+
+
+# One-time sign-in codes for agents (django-otp, email device)
+# https://django-otp-official.readthedocs.io/en/stable/overview.html#email-devices
+
+OTP_EMAIL_SUBJECT = 'Your Cedar Grove sign-in code'
+OTP_EMAIL_BODY_TEMPLATE = 'Your sign-in code is {{ token }}\n\nIt works once and expires in 5 minutes.\n'
+# Seconds a code stays valid, and between two emails to the same agent.
+OTP_EMAIL_TOKEN_VALIDITY = 300
+OTP_EMAIL_COOLDOWN_DURATION = 60
 
 
 # OpenAPI schema / Swagger UI (drf-spectacular)

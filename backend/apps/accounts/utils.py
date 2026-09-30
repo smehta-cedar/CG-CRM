@@ -116,7 +116,140 @@ def record_note(user, actor, kind, changes):
 
 def issue_tokens(user):
     refresh_token = RefreshToken.for_user(user)
+    # Copied onto the access token. Staff tokens omit it.
+    if user.agent_id:
+        refresh_token['agent_id'] = str(user.agent_id)
     return {'access': str(refresh_token.access_token), 'refresh': str(refresh_token)}
+
+
+def user_for_agent(agent):
+    """The sign-in account for this agent, created the first time a code is asked for.
+
+    A staff account that already uses the work email is left alone and refused.
+    An account left behind by a deleted agent is reused.
+    """
+    from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+
+    from apps.agents.models import Agent
+
+    user = User.objects.filter(agent=agent).first()
+    if user is not None:
+        return user
+
+    existing = User.objects.filter(email=agent.email).first()
+    if existing is not None and existing.agent_id is None:
+        raise PermissionDenied(
+            'This email is a staff account. Sign in on the staff form.',
+            'staff_account',
+        )
+    if existing is not None and existing.agent_id and existing.agent_id != agent.pk:
+        linked = Agent.all_objects.filter(pk=existing.agent_id).first()
+        if linked is not None and not linked.is_deleted:
+            raise AuthenticationFailed('Incorrect email or code.', 'invalid_credentials')
+
+    if existing is None:
+        user = User(email=agent.email, full_name=agent.name, agent=agent)
+        user.set_unusable_password()
+        user.save()
+        return user
+
+    existing.agent = agent
+    existing.full_name = agent.name
+    existing.is_active = True
+    existing.set_unusable_password()
+    existing.save()
+    return existing
+
+
+def agent_for_email(email):
+    """The one live agent with this work email, or None when there is none or several."""
+    from apps.agents.models import Agent
+
+    matches = list(Agent.objects.filter(email=normalize_email(email))[:2])
+    return matches[0] if len(matches) == 1 else None
+
+
+def agent_code_device(user):
+    """The email OTP device that sends and checks this sign-in account's codes."""
+    from django_otp.plugins.otp_email.models import EmailDevice
+
+    device, _ = EmailDevice.objects.get_or_create(user=user, defaults={'name': 'Agent sign-in'})
+    return device
+
+
+def send_agent_code(email):
+    """Email a new one-time sign-in code when `email` is the work email of
+    exactly one active agent; otherwise do nothing. The caller answers the
+    same either way, so this never says which happened.
+
+    django-otp makes the code (six random digits), keeps it until it is used
+    or OTP_EMAIL_TOKEN_VALIDITY runs out, and won't send another within
+    OTP_EMAIL_COOLDOWN_DURATION. A new code replaces the last one.
+    """
+    import logging
+
+    from rest_framework.exceptions import APIException
+
+    agent = agent_for_email(email)
+    if agent is None or not agent.is_active:
+        return
+    try:
+        user = user_for_agent(agent)
+    except APIException:
+        # The email is a staff account, or another agent's sign-in account.
+        return
+    if not user.is_active:
+        return
+    try:
+        agent_code_device(user).generate_challenge()
+    except Exception:
+        # The reply can't differ, so a mail failure is only logged.
+        logging.getLogger(__name__).exception('Could not email a sign-in code to agent %s.', agent.pk)
+
+
+def verify_agent_code(agent, code):
+    """True when `code` is the agent's current emailed code. A used or expired code never is.
+    Wrong guesses slow further checks down (django-otp throttling)."""
+    user = User.objects.filter(agent=agent).first()
+    if user is None:
+        return False
+    return agent_code_device(user).verify_token(code)
+
+
+def sync_agent_login_user(agent):
+    """Keep a linked sign-in account on this agent's work email, name and status.
+
+    Does nothing until the agent has asked for a code once. A work email another
+    account already uses is rejected.
+    """
+    from rest_framework.exceptions import ValidationError
+
+    user = User.objects.filter(agent=agent).first()
+    if user is None:
+        return
+    if agent.email and User.objects.filter(email=agent.email).exclude(pk=user.pk).exists():
+        raise ValidationError({'email': ['That work email is already used to sign in.']})
+
+    updates = []
+    if agent.email and user.email != agent.email:
+        user.email = agent.email
+        updates.append('email')
+    if user.full_name != agent.name:
+        user.full_name = agent.name
+        updates.append('full_name')
+    if user.is_active != agent.is_active:
+        user.is_active = agent.is_active
+        updates.append('is_active')
+    if updates:
+        user.save(update_fields=updates)
+
+
+def deactivate_agent_login(agent):
+    """Block the sign-in account when the agent is deleted."""
+    user = User.objects.filter(agent=agent).first()
+    if user is not None and user.is_active:
+        user.is_active = False
+        user.save(update_fields=['is_active'])
 
 
 # Roles. Only superusers change them (see apps.accounts.validators.ensure_superuser).

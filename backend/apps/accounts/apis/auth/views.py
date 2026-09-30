@@ -5,11 +5,12 @@ from rest_framework.decorators import (
     throttle_classes,
     throttle_scope,
 )
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.serializers import TokenBlacklistSerializer
 
-from apps.accounts.utils import issue_tokens, save_user, set_user_password
+from apps.accounts.utils import issue_tokens, send_agent_code, save_user, set_user_password
 from apps.accounts.validators import (
     ensure_current_password,
     ensure_password_changed,
@@ -22,6 +23,8 @@ from apps.base.api.response import APIResponse
 from . import swagger
 from ..users.serializers import UserSerializer
 from .serializers import (
+    AgentCodeRequestSerializer,
+    AgentLoginSerializer,
     ChangePasswordSerializer,
     LoginSerializer,
     ProfileUpdateSerializer,
@@ -46,6 +49,79 @@ def login(request):
     serializer = LoginSerializer(data=request.data, context={'request': request})
     serializer.is_valid(raise_exception=True)
     return APIResponse(serializer.validated_data, 'Logged in successfully.')
+
+
+@swagger.agent_code
+@api_view(['POST'])
+@authentication_classes([TokenlessAuthentication])
+@permission_classes([AllowAny])
+@throttle_classes([ScopedRateThrottle])
+@throttle_scope('auth')
+def agent_code(request):
+    # The same reply whether or not a code went out, so the form can't tell.
+    serializer = AgentCodeRequestSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    send_agent_code(serializer.validated_data['email'])
+    return APIResponse(None, 'If that email has a code, it is on its way.')
+
+
+@swagger.agent_login
+@api_view(['POST'])
+@authentication_classes([TokenlessAuthentication])
+@permission_classes([AllowAny])
+@throttle_classes([ScopedRateThrottle])
+@throttle_scope('auth')
+def agent_login(request):
+    # Work email and the emailed one-time code. No password. validated data is the tokens and the user.
+    serializer = AgentLoginSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    return APIResponse(serializer.validated_data, 'Logged in successfully.')
+
+
+@swagger.agent_home
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def agent_home(request):
+    """This agent's own profile, appointments and certifications. Staff get a 404."""
+    from apps.agents.apis.agents.serializers import AgentSerializer
+    from apps.agents.models import Agent
+    from apps.contracts.apis.contracts.serializers import ContractSerializer
+    from apps.contracts.models import CarrierContract
+    from apps.policies.apis.certifications.serializers import CertificationSerializer
+    from apps.policies.models import Certification
+
+    agent_id = request.user.agent_id
+    if not agent_id:
+        raise NotFound('No agent profile is linked to this account.')
+    agent = Agent.objects.prefetch_related('licenses__state').filter(pk=agent_id).first()
+    if agent is None:
+        raise NotFound('No agent profile is linked to this account.')
+    if not agent.is_active:
+        raise PermissionDenied(
+            'Your account is blocked. Please contact an administrator.',
+            'account_blocked',
+        )
+
+    contracts = (
+        CarrierContract.objects.filter(agent=agent)
+        .select_related('agent', 'carrier')
+        .prefetch_related('appointed_states')
+        .order_by('carrier__name')
+    )
+    certifications = (
+        Certification.objects.filter(agent=agent)
+        .select_related('agent', 'policy_type')
+        .prefetch_related('carriers')
+        .order_by('policy_type__name')
+    )
+    return APIResponse(
+        {
+            'agent': AgentSerializer(agent).data,
+            'contracts': ContractSerializer(contracts, many=True).data,
+            'certifications': CertificationSerializer(certifications, many=True).data,
+        },
+        'Profile fetched successfully.',
+    )
 
 
 @swagger.refresh

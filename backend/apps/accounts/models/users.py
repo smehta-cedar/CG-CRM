@@ -70,6 +70,15 @@ class User(BaseModel, AbstractBaseUser):
         related_name='users',
     )
 
+    # Set for an agent who signs in with a work email and a code. Staff accounts leave it empty.
+    agent = models.OneToOneField(
+        'agents.Agent',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='user',
+    )
+
     is_staff = models.BooleanField(default=False, help_text='Can log in to the Django admin.')
     is_superuser = models.BooleanField(
         default=False,

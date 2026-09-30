@@ -5,6 +5,7 @@ from django.db import models
 from apps.agents.models import Agent
 from apps.base.models import BaseModel
 from apps.base.storage import PrivateStorage
+from apps.carriers.models import Carrier
 
 from .policy_types import PolicyType
 
@@ -20,8 +21,14 @@ class Certification(BaseModel):
     "Medicare Advantage".
 
     The same rows are added from the agent's profile and from the policy
-    type's row. Carrier-policy certificates, agency contracts, commissions
-    and any rule that blocks a sale are not modelled here.
+    type's row. Carrier-policy certificates, commissions and any rule that
+    blocks a sale are not modelled here.
+
+    `carriers` is filled only when the policy type's certification scope is
+    per_carrier: then it holds at least one carrier, each one of the type's
+    certification carriers with a live agency contract (the API enforces
+    it). One certification can cover several carriers; it stays one row
+    per agent and policy type. For any other scope it is empty.
 
     `start_date` and `end_date` are optional; when both are set the end is
     on or after the start (the API enforces that). `is_active` (from
@@ -40,6 +47,7 @@ class Certification(BaseModel):
     file = models.FileField(storage=PrivateStorage(), upload_to=certification_file_path, blank=True)
     file_name = models.CharField(max_length=255, blank=True)
     is_verified = models.BooleanField(default=False)
+    carriers = models.ManyToManyField(Carrier, blank=True, related_name='certifications')
 
     class Meta(BaseModel.Meta):
         constraints = [
@@ -54,3 +62,8 @@ class Certification(BaseModel):
 
     def __str__(self):
         return f'{self.agent} - {self.policy_type}'
+
+    @property
+    def carrier_names(self):
+        """Covered carrier names, in name order."""
+        return sorted((carrier.name for carrier in self.carriers.all()), key=str.lower)

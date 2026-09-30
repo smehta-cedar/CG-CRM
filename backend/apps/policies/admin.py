@@ -24,9 +24,10 @@ class PolicyTypeNoteInline(admin.TabularInline):
 
 @admin.register(PolicyType)
 class PolicyTypeAdmin(admin.ModelAdmin):
-    list_display = ('name', 'certification_required', 'is_active', 'created_at')
-    list_filter = ('is_active', 'certification_required')
+    list_display = ('name', 'certification_scope', 'is_active', 'created_at')
+    list_filter = ('is_active', 'certification_scope')
     search_fields = ('name',)
+    filter_horizontal = ('certification_carriers',)
     readonly_fields = AUDIT_FIELDS
     inlines = (PolicyTypeNoteInline,)
 
@@ -86,6 +87,7 @@ class CertificationAdmin(admin.ModelAdmin):
     list_display = ('agent', 'policy_type', 'start_date', 'end_date', 'is_verified', 'is_active', 'created_at')
     list_filter = ('is_active', 'is_verified', 'policy_type')
     search_fields = ('agent__name', 'policy_type__name')
+    filter_horizontal = ('carriers',)
     # The PDF sits in private storage with no URL, so the admin shows its name only.
     exclude = ('file',)
     readonly_fields = ('file_name', *AUDIT_FIELDS)

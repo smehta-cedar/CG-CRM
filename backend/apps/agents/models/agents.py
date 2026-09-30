@@ -11,7 +11,8 @@ class Agent(BaseModel):
     columns are the agent's own, all optional, as are the dates and
     ssn_last4. Licensed states live on
     AgentStateLicense rows (one per state). Writing numbers live on carrier
-    contracts and portal logins on passwords, not here.
+    contracts and portal logins on passwords, not here. Sign-in to this app
+    is a one-time code emailed to the work email; there is no password.
 
     `is_active` (from BaseModel) is the agent's status; it starts on.
     """

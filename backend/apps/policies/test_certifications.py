@@ -7,7 +7,10 @@ from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Role, RolePermission, User
+from apps.agency.models import Agency
 from apps.agents.models import Agent
+from apps.carriers.models import Carrier
+from apps.contracts.models import AgencyCarrierContract
 
 from .models import Certification, CertificationNote, PolicyType
 
@@ -319,6 +322,112 @@ def make_pdf(name='certificate.pdf', body=b'%PDF-1.7\n%fake\n'):
     return SimpleUploadedFile(name, body, content_type='application/pdf')
 
 
+class CertificationCarrierTests(CertificationAPITestCase):
+    def setUp(self):
+        super().setUp()
+        agency = Agency.objects.create(name='Cedar Grove')
+        self.humana = Carrier.objects.create(name='Humana', lines_of_business=['MAPD'])
+        self.aetna = Carrier.objects.create(name='Aetna', lines_of_business=['MAPD'])
+        self.cigna = Carrier.objects.create(name='Cigna', lines_of_business=['MAPD'])
+        self.wellcare = Carrier.objects.create(name='Wellcare', lines_of_business=['MAPD'])
+        for carrier in (self.humana, self.aetna, self.cigna):
+            AgencyCarrierContract.objects.create(agency=agency, carrier=carrier)
+        # MAPD needs certifying for Humana, Aetna and Wellcare; Cigna is contracted but not required.
+        self.mapd = make_policy_type(name='MAPD', certification_scope='per_carrier')
+        self.mapd.certification_carriers.set([self.humana, self.aetna, self.wellcare])
+        self.policy_type.certification_scope = 'single'
+        self.policy_type.save()
+
+    def mapd_body(self, *carriers, **extra):
+        return {
+            **self.sample,
+            'policy_type': str(self.mapd.pk),
+            'carriers': [str(carrier.pk) for carrier in carriers],
+            **extra,
+        }
+
+    def test_one_certification_covers_two_carriers(self):
+        response = self.client.post(self.create_url(), self.mapd_body(self.humana, self.aetna), format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        data = response.data['data']
+        self.assertEqual([carrier['name'] for carrier in data['carriers']], ['Aetna', 'Humana'])
+        self.assertEqual(data['start_date'], '2026-01-01')
+        self.assertEqual(Certification.objects.filter(agent=self.agent, policy_type=self.mapd).count(), 1)
+        note = CertificationNote.objects.get(certification_id=data['id'])
+        self.assertEqual(note.changes[2], {'field': 'carriers', 'from': '', 'to': 'Aetna, Humana'})
+        # The list shows it both for the agent and for the policy type.
+        for query in ({'agent': str(self.agent.pk)}, {'policy_type': str(self.mapd.pk)}):
+            listed = self.client.get(self.list_url(), query).data['data']
+            self.assertEqual([len(row['carriers']) for row in listed if row['id'] == data['id']], [2])
+
+    def test_second_mapd_row_for_the_agent_is_400(self):
+        self.client.post(self.create_url(), self.mapd_body(self.humana), format='json')
+        response = self.client.post(self.create_url(), self.mapd_body(self.aetna), format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('policy_type', response.data['errors'])
+
+    def test_per_carrier_needs_a_carrier(self):
+        response = self.client.post(self.create_url(), self.mapd_body(), format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('carriers', response.data['errors'])
+
+    def test_carrier_not_required_on_the_type_is_400(self):
+        response = self.client.post(self.create_url(), self.mapd_body(self.humana, self.cigna), format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['errors']['carriers'], ['Cigna does not need a MAPD certification.'])
+
+    def test_uncontracted_carrier_is_400(self):
+        response = self.client.post(self.create_url(), self.mapd_body(self.wellcare), format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['errors']['carriers'], ['Wellcare has no agency contract.'])
+
+    def test_carriers_on_a_single_type_are_400(self):
+        body = {**self.sample, 'carriers': [str(self.humana.pk)]}
+        response = self.client.post(self.create_url(), body, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('carriers', response.data['errors'])
+
+    def test_single_type_has_no_carriers(self):
+        response = self.client.post(self.create_url(), self.sample, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['data']['carriers'], [])
+
+    def test_patch_changes_carriers_and_dates_and_notes_them(self):
+        certification = make_certification(self.agent, self.mapd)
+        certification.carriers.set([self.humana])
+        body = {'carriers': [str(self.humana.pk), str(self.aetna.pk)], 'end_date': '2027-06-30'}
+        response = self.client.patch(self.detail_url(certification), body, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data['data']['carriers']), 2)
+        self.assertEqual(
+            certification.notes.get().changes,
+            [
+                {'field': 'carriers', 'from': 'Humana', 'to': 'Aetna, Humana'},
+                {'field': 'end_date', 'from': '', 'to': '2027-06-30'},
+            ],
+        )
+
+    def test_patch_without_carriers_keeps_them(self):
+        certification = make_certification(self.agent, self.mapd)
+        certification.carriers.set([self.humana])
+        response = self.client.patch(self.detail_url(certification), {'is_verified': True}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data['data']['carriers']), 1)
+
+    def test_patch_to_a_single_type_clears_carriers(self):
+        certification = make_certification(self.agent, self.mapd)
+        certification.carriers.set([self.humana])
+        response = self.client.patch(self.detail_url(certification), {'policy_type': str(self.policy_type.pk)}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['carriers'], [])
+
+    def test_patch_to_per_carrier_type_needs_carriers(self):
+        certification = make_certification(self.agent, self.policy_type)
+        response = self.client.patch(self.detail_url(certification), {'policy_type': str(self.mapd.pk)}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('carriers', response.data['errors'])
+
+
 class CertificationFileTests(CertificationAPITestCase):
     def setUp(self):
         super().setUp()
@@ -415,6 +524,19 @@ class CertificationFileTests(CertificationAPITestCase):
         self.assertEqual(response.data['data']['file_name'], 'certificate.pdf')
         self.assertIsNone(response.data['data']['end_date'])
         self.assertTrue(response.data['data']['is_verified'])
+
+    def test_multipart_carries_carriers(self):
+        agency = Agency.objects.create(name='Cedar Grove')
+        humana = Carrier.objects.create(name='Humana', lines_of_business=['MAPD'])
+        aetna = Carrier.objects.create(name='Aetna', lines_of_business=['MAPD'])
+        for carrier in (humana, aetna):
+            AgencyCarrierContract.objects.create(agency=agency, carrier=carrier)
+        mapd = make_policy_type(name='MAPD', certification_scope='per_carrier')
+        mapd.certification_carriers.set([humana, aetna])
+        response = self.create_with_file(policy_type=str(mapd.pk), carriers=[str(humana.pk), str(aetna.pk)])
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(len(response.data['data']['carriers']), 2)
+        self.assertEqual(response.data['data']['file_name'], 'certificate.pdf')
 
     def test_download_needs_certifications_view(self):
         certification = Certification.objects.get(pk=self.create_with_file().data['data']['id'])

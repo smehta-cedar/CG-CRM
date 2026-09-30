@@ -6,6 +6,8 @@ from apps.base.api.schema import api_response, combine_schemas, error_responses
 
 from ..users.serializers import UserSerializer
 from .serializers import (
+    AgentCodeRequestSerializer,
+    AgentLoginSerializer,
     ChangePasswordSerializer,
     LoginSerializer,
     ProfileUpdateSerializer,
@@ -31,6 +33,44 @@ login = extend_schema(
     ),
     request=LoginSerializer,
     responses={200: api_response(TokenPairWithUserSerializer), **error_responses(400, 401, 403, 429)},
+)
+
+
+agent_code = extend_schema(
+    tags=TAGS,
+    summary='Email an agent a one-time sign-in code',
+    auth=[],
+    description=(
+        'Emails a new six-digit code to the work email when it belongs to exactly one active agent. '
+        'The code works once and expires after five minutes; another is not sent within a minute. '
+        'The reply is the same when the email is unknown, shared or inactive. '
+        'Error codes: `invalid` (400, not an email), `throttled` (429).'
+    ),
+    request=AgentCodeRequestSerializer,
+    responses={200: api_response(), **error_responses(400, 429)},
+)
+
+
+agent_login = extend_schema(
+    tags=TAGS,
+    summary='Log in as an agent',
+    auth=[],
+    description=(
+        'Work email and the code from the agent-code email. No password. '
+        'Error codes: `invalid` (400), `invalid_credentials` (401, unknown email, or a wrong, used or expired code), '
+        '`account_blocked` (403), `staff_account` (403, the email is a staff account), '
+        '`throttled` (429).'
+    ),
+    request=AgentLoginSerializer,
+    responses={200: api_response(TokenPairWithUserSerializer), **error_responses(400, 401, 403, 429)},
+)
+
+
+agent_home = extend_schema(
+    tags=TAGS,
+    summary='Get the signed-in agent profile',
+    description='The agent, their appointments and their certifications. A staff account gets 404.',
+    responses={200: api_response(), **error_responses(401, 403, 404)},
 )
 
 

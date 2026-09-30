@@ -1,6 +1,7 @@
 asgiref==3.12.1
 attrs==26.1.0
 Django==5.2
+django-otp==1.7.3
 django-silk==5.6.0
 djangorestframework-simplejwt==5.5.1
 djangorestframework==3.18.1

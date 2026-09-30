@@ -13,12 +13,13 @@ from apps.policies.utils import (
     filter_policy_types,
     get_policy_type_or_404,
     normalize_name,
+    policy_type_queryset,
     record_note,
     save_policy_type,
     search_policy_types,
     snapshot,
 )
-from apps.policies.validators import ensure_name_free
+from apps.policies.validators import ensure_name_free, resolve_certification_carriers
 
 from . import swagger
 from .serializers import (
@@ -36,12 +37,12 @@ CAN_MANAGE_POLICY_TYPES = module_permission('policy_types')
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, CAN_MANAGE_POLICY_TYPES])
 def policy_type_list(request):
-    # Check the ?search=, ?is_active= and ?certification_required= values; bad ones give a 400.
+    # Check the ?search=, ?is_active= and ?certification_scope= values; bad ones give a 400.
     query = PolicyTypeListQuerySerializer(data=request.query_params.dict())
     query.is_valid(raise_exception=True)
     filters = query.validated_data
 
-    policy_types = PolicyType.objects.all()
+    policy_types = policy_type_queryset()
 
     search = filters.get('search')
     if search:
@@ -50,7 +51,7 @@ def policy_type_list(request):
     policy_types = filter_policy_types(
         policy_types,
         is_active=filters.get('is_active'),
-        certification_required=filters.get('certification_required'),
+        certification_scope=filters.get('certification_scope'),
     )
 
     # Cut the requested page (?page=, ?page_size=); meta holds the page numbers and totals.
@@ -69,15 +70,18 @@ def policy_type_create(request):
 
     name = normalize_name(data['name'])
     ensure_name_free(name)
+    scope = data.get('certification_scope', PolicyType.SCOPE_NONE)
+    carriers = resolve_certification_carriers(data.get('certification_carriers', []), scope)
 
     with transaction.atomic():
         policy_type = PolicyType.objects.create(
             name=name,
-            certification_required=data.get('certification_required', False),
+            certification_scope=scope,
             is_active=data.get('is_active', True),
             created_by=request.user,
             updated_by=request.user,
         )
+        policy_type.certification_carriers.set(carriers)
         # The note lists every field, as the policy type now reads.
         record_note(policy_type, request.user, PolicyTypeNote.KIND_ADDED, diff_snapshots({}, snapshot(policy_type), NOTE_FIELDS))
 
@@ -109,9 +113,21 @@ def policy_type_detail(request, pk):
             if name.lower() != policy_type.name.lower():
                 ensure_name_free(name, exclude=policy_type)
 
+        # Carriers are checked when they or the scope were sent. Leaving the
+        # per_carrier scope clears them; entering it needs them.
+        carriers = None
+        if 'certification_carriers' in fields or 'certification_scope' in fields:
+            scope = fields.get('certification_scope', policy_type.certification_scope)
+            pks = fields.pop('certification_carriers', None)
+            if pks is None:
+                pks = [carrier.pk for carrier in policy_type.certification_carriers.all()]
+                if scope != PolicyType.SCOPE_PER_CARRIER:
+                    pks = []
+            carriers = resolve_certification_carriers(pks, scope)
+
         before = snapshot(policy_type)
         with transaction.atomic():
-            save_policy_type(policy_type, request.user, **fields)
+            save_policy_type(policy_type, request.user, carriers=carriers, **fields)
             record_note(policy_type, request.user, PolicyTypeNote.KIND_EDITED, diff_snapshots(before, snapshot(policy_type), NOTE_FIELDS))
         return APIResponse(PolicyTypeSerializer(policy_type).data, 'Policy type updated successfully.')
 

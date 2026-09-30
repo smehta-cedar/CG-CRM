@@ -56,8 +56,8 @@ def user_list(request):
     query.is_valid(raise_exception=True)
     filters = query.validated_data
 
-    # All users, with each one's role and designation loaded in the same query.
-    users = User.objects.select_related('role', 'designation')
+    # Staff accounts only. An agent's sign-in (work email + code) is not a user row here.
+    users = User.objects.filter(agent__isnull=True).select_related('role', 'designation')
 
     search = filters.get('search')
     if search:

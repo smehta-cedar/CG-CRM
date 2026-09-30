@@ -35,3 +35,7 @@ DATABASES = {
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+
+
+# Email: printed in the runserver log instead of sent.
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'

@@ -16,6 +16,18 @@ def ensure_npn_free(npn, exclude=None):
         raise ValidationError({'npn': [f'NPN {npn} already belongs to {owner.name}.']})
 
 
+def ensure_login_email_free(email, exclude=None):
+    """Agents sign in with their work email, so each one belongs to one agent. Blank emails are not checked."""
+    if not email:
+        return
+    agents = Agent.objects.filter(email=email)
+    if exclude is not None:
+        agents = agents.exclude(pk=exclude.pk)
+    owner = agents.first()
+    if owner is not None:
+        raise ValidationError({'email': [f'{email} already belongs to {owner.name}.']})
+
+
 def ensure_name_free(name, exclude=None):
     agents = Agent.objects.filter(name__iexact=name)
     if exclude is not None:

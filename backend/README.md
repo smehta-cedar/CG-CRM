@@ -133,13 +133,17 @@ starting today and running two years. NPN is unique among live agents.
 
 `GET /policy-types/` (the catalog of policy kinds, `apps.policies`: its own
 entity, not a carrier's line of business) takes `?search=` (name),
-`?is_active=` and `?certification_required=`, plus paging; rows come back by
-name. A policy type is a `name` (unique among live rows, ignoring case) and
-a `certification_required` flag (default false: the board's "certification
-required"). Change notes as for carriers, with the flag shown as `yes` /
-`no`; `policy-types/{id}/notes/` lists them newest first. State and county
-availability, agency contracts and agent certifications are not built yet;
-they will point at this catalog.
+`?is_active=` and `?certification_scope=`, plus paging; rows come back by
+name. A policy type is a `name` (unique among live rows, ignoring case), a
+`certification_scope` (`none`, the default; `single`: one certification
+covers the type; `per_carrier`: certified against carriers) and
+`certification_carriers`, the carriers that need the certification. Those
+are sent as ids and come back as carrier summaries by name; they are only
+allowed for `per_carrier`, which needs at least one, each with a live agency
+contract (else a 400 under `certification_carriers`). Switching to another
+scope clears them. Nothing blocks a sale on this. Change notes as for
+carriers, with the scope shown as `none` / `single` / `per carrier` and the
+carriers as names; `policy-types/{id}/notes/` lists them newest first.
 
 `GET /carrier-policies/` (one named policy a carrier offers, also in
 `apps.policies`; guarded by the `carriers` permission, since a policy lives
@@ -158,14 +162,18 @@ and status; `carrier-policies/{id}/notes/` lists them newest first.
 `apps.policies`, with its own `certifications` permission module) takes
 `?agent=` and `?policy_type=`, plus paging; rows come back by policy type
 name then agent name and carry `agent` and `policy_type` summaries. A
-certification has an `agent`, a `policy_type` from the catalog, optional
+certification has an `agent`, a `policy_type` from the catalog, `carriers`
+(ids in, carrier summaries by name out; only for a `per_carrier` type, then
+at least one, each among the type's `certification_carriers` and with a live
+agency contract, else a 400 under `carriers`; changing to a type that is not
+per carrier clears them), optional
 `start_date` / `end_date` (null when unset; when both are set the end is on
 or after the start, else a 400 under `end_date`) and a status. One live row
 per agent and policy type; a deleted pair can be added again. A duplicate
 pair is a 400 under `policy_type` on create and whenever `policy_type` was
 sent on PATCH, otherwise under `agent`. Change notes as for carriers,
-listing agent (by name), policy type (by name), start date, end date and
-status; `certifications/{id}/notes/` lists them newest first.
+listing agent (by name), policy type (by name), carriers (by name), start
+date, end date and status; `certifications/{id}/notes/` lists them newest first.
 
 `GET /passwords/` (carrier portal logins, one per agent + carrier) takes
 `?search=` (username, agent name, carrier name), `?agent_id=`, `?carrier_id=`

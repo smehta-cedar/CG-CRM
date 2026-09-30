@@ -12,8 +12,9 @@ class PolicyTypeNote(BaseModel):
     create and on every update that changed something. Append-only.
 
     `changes` is a list of {"field", "from", "to"} with display strings:
-    the certification flag as "yes" / "no", the status as "active" /
-    "inactive". `created_by` (from BaseModel) is who made the change.
+    the certification scope as "none" / "single" / "per carrier", the
+    certification carriers by name joined with ", ", the status as
+    "active" / "inactive". `created_by` (from BaseModel) is who made the change.
     """
 
     KIND_ADDED = 'added'
@@ -67,7 +68,8 @@ class CertificationNote(BaseModel):
     create and on every update that changed something. Append-only.
 
     `changes` is a list of {"field", "from", "to"} with display strings: the
-    agent and policy type by name, dates as YYYY-MM-DD (blank when unset),
+    agent, policy type and carriers by name, dates as YYYY-MM-DD (blank
+    when unset),
     the status as "active" / "inactive". `created_by` (from BaseModel) is
     who made the change.
     """

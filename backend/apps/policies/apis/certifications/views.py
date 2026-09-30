@@ -26,6 +26,7 @@ from apps.policies.validators import (
     ensure_pair_free,
     ensure_pdf,
     resolve_agent,
+    resolve_covered_carriers,
     resolve_policy_type,
 )
 
@@ -74,6 +75,7 @@ def certification_create(request):
     policy_type = resolve_policy_type(data['policy_type'])
     # Both were sent, so the pair is reported as the policy type being taken for the agent.
     ensure_pair_free(agent, policy_type, field='policy_type')
+    carriers = resolve_covered_carriers(data.get('carriers', []), policy_type)
     start_date = data.get('start_date')
     end_date = data.get('end_date')
     ensure_dates_in_order(start_date, end_date)
@@ -94,6 +96,7 @@ def certification_create(request):
             created_by=request.user,
             updated_by=request.user,
         )
+        certification.carriers.set(carriers)
         # The note lists every filled field, as the certification now reads.
         record_certification_note(
             certification,
@@ -141,6 +144,15 @@ def certification_detail(request, pk):
                 exclude=certification,
             )
 
+        # Carriers are checked when they were sent or the policy type changed;
+        # a type that is not per carrier clears them.
+        carriers = None
+        pks = fields.pop('carriers', None)
+        if pks is not None:
+            carriers = resolve_covered_carriers(pks, policy_type)
+        elif policy_type != certification.policy_type:
+            carriers = resolve_covered_carriers([], policy_type)
+
         ensure_dates_in_order(
             fields.get('start_date', certification.start_date),
             fields.get('end_date', certification.end_date),
@@ -155,7 +167,7 @@ def certification_detail(request, pk):
 
         before = certification_snapshot(certification)
         with transaction.atomic():
-            save_certification(certification, request.user, **fields)
+            save_certification(certification, request.user, carriers=carriers, **fields)
             if replaced:
                 delete_file_on_commit(certification.file, replaced)
             record_certification_note(

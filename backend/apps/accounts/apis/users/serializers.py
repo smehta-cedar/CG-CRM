@@ -20,6 +20,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     role = RoleSummarySerializer(read_only=True)
     designation = DesignationSummarySerializer(read_only=True)
+    agent_id = serializers.UUIDField(read_only=True, allow_null=True)
 
     class Meta:
         model = User
@@ -30,6 +31,7 @@ class UserSerializer(serializers.ModelSerializer):
             'phone',
             'role',
             'designation',
+            'agent_id',
             'is_active',
             'is_superuser',
             'last_login',

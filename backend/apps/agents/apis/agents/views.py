@@ -20,11 +20,13 @@ from apps.agents.utils import (
 )
 from apps.agents.validators import (
     ensure_address_complete,
+    ensure_login_email_free,
     ensure_name_free,
     ensure_npn_free,
     resolve_licenses,
     resolve_state,
 )
+from apps.accounts.utils import deactivate_agent_login, sync_agent_login_user
 from apps.base.api.pagination import paginate
 from apps.base.api.permissions import module_permission
 from apps.base.api.response import APIResponse
@@ -91,13 +93,15 @@ def agent_create(request):
     ensure_npn_free(npn)
     address = _address_columns(data.get('address'))
     licenses = resolve_licenses(data.get('licenses', []))
+    email = normalize_email(data.get('email', ''))
+    ensure_login_email_free(email)
 
     with transaction.atomic():
         agent = Agent.objects.create(
             name=name,
             aliases=data.get('aliases', []),
             npn=npn,
-            email=normalize_email(data.get('email', '')),
+            email=email,
             phone=data.get('phone', '').strip(),
             personal_email=normalize_email(data.get('personal_email', '')),
             personal_phone=data.get('personal_phone', '').strip(),
@@ -147,6 +151,8 @@ def agent_detail(request, pk):
         for field in ('email', 'personal_email'):
             if field in fields:
                 fields[field] = normalize_email(fields[field])
+        if fields.get('email') and fields['email'] != agent.email:
+            ensure_login_email_free(fields['email'], exclude=agent)
         for field in ('phone', 'personal_phone'):
             if field in fields:
                 fields[field] = fields[field].strip()
@@ -164,6 +170,7 @@ def agent_detail(request, pk):
         with transaction.atomic():
             if fields:
                 save_agent(agent, request.user, **fields)
+            sync_agent_login_user(agent)
             if licenses is not None:
                 sync_licenses(agent, request.user, licenses)
             # Read the rows again for the note and the response.
@@ -172,6 +179,8 @@ def agent_detail(request, pk):
         return APIResponse(AgentSerializer(agent).data, 'Agent updated successfully.')
 
     # DELETE: soft delete; the name and NPN become free for reuse.
+    # The sign-in account, if one was created, can no longer be used.
+    deactivate_agent_login(agent)
     agent.delete(user=request.user)
     return APIResponse(None, 'Agent deleted successfully.')
 
