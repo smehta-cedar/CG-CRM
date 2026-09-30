@@ -109,10 +109,17 @@ All under `/api/v1/`. Everything except `auth/login/` requires
 `?is_active=`, plus `?page=` / `?page_size=`.
 
 `GET /carriers/` takes `?search=` (name, alias, line of business),
-`?is_active=` and `?state=` (two-letter code), plus `?page=` / `?page_size=`;
-rows come back by name. A carrier's `available_states` is a list of state
-codes (rows of `agency.State`), and `lines_of_business` at least one of
-`General`, `Supp/Ancillary`, `MAPD`, `Life`, `Annuities`. The API records a
+`?is_active=` (true only for status `active`, i.e. in force) and `?state=`
+(two-letter code), plus `?page=` / `?page_size=`; rows come back by name. A
+carrier's `status` is `active`, `applied`, `pending`, `expired` or `inactive`
+and `link` an optional URL. Its states are `licenses`, rows like an agent's
+licences (`state`, `license_number`, `status`, `start_date`, `end_date` as
+the expiration, `life`, `health`); a create or update that sends `licenses`
+replaces the set, and `available_states` (read-only, state codes in code
+order) always equals the rows' states. Its `lines_of_business` at least one of
+`Medicare Supplement`, `Ancillary`, `MAPD`, `Life`, `Annuities` on every
+save (carriers that only had the retired `General` were left with none;
+`Supp/Ancillary` was renamed `Ancillary`). The API records a
 change note on every create and on every update that changed something;
 `carriers/{id}/notes/` lists them newest first. Load the carriers from the
 frontend's seed file with:

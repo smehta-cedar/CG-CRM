@@ -16,12 +16,13 @@ from apps.carriers.utils import (
     save_carrier,
     search_carriers,
     snapshot,
+    sync_licenses,
 )
 from apps.carriers.validators import (
     ensure_aliases_free,
     ensure_lines_chosen,
     ensure_name_free,
-    resolve_states,
+    resolve_licenses,
 )
 from apps.contracts.utils import with_agent_access
 
@@ -47,7 +48,7 @@ def carrier_list(request):
     filters = query.validated_data
 
     # agent_accessible in one query rather than one per carrier.
-    carriers = with_agent_access(Carrier.objects.prefetch_related('available_states'))
+    carriers = with_agent_access(Carrier.objects.prefetch_related('available_states', 'licenses__state'))
 
     search = filters.get('search')
     if search:
@@ -79,19 +80,21 @@ def carrier_create(request):
     ensure_name_free(name)
     ensure_aliases_free(aliases, name)
     ensure_lines_chosen(lines)
-    states = resolve_states(data.get('available_states', []))
+    licenses = resolve_licenses(data.get('licenses', []))
 
     with transaction.atomic():
         carrier = Carrier.objects.create(
             name=name,
             aliases=aliases,
             lines_of_business=lines,
-            is_active=data.get('is_active', True),
+            link=data.get('link', ''),
+            status=data.get('status', 'active'),
             created_by=request.user,
             updated_by=request.user,
         )
-        carrier.available_states.set(states)
+        sync_licenses(carrier, request.user, licenses)
         # The note lists every filled field, as the carrier now reads.
+        carrier = get_carrier_or_404(carrier.pk)
         record_note(carrier, request.user, CarrierNote.KIND_ADDED, diff_snapshots({}, snapshot(carrier)))
 
     return APIResponse(CarrierSerializer(carrier).data, 'Carrier created successfully.', status=status.HTTP_201_CREATED)
@@ -125,14 +128,14 @@ def carrier_detail(request, pk):
         if 'lines_of_business' in fields:
             ensure_lines_chosen(fields['lines_of_business'])
 
-        states = None
-        if 'available_states' in fields:
-            states = resolve_states(fields.pop('available_states'))
+        licenses = None
+        if 'licenses' in fields:
+            licenses = resolve_licenses(fields.pop('licenses'))
 
         before = snapshot(carrier)
         with transaction.atomic():
-            save_carrier(carrier, request.user, states=states, **fields)
-            # The states were just replaced; read them again for the note and the response.
+            save_carrier(carrier, request.user, licenses=licenses, **fields)
+            # The state rows were just replaced; read them again for the note and the response.
             carrier = get_carrier_or_404(pk)
             record_note(carrier, request.user, CarrierNote.KIND_EDITED, diff_snapshots(before, snapshot(carrier)))
         return APIResponse(CarrierSerializer(carrier).data, 'Carrier updated successfully.')

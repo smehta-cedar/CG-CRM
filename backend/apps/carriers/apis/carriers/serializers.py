@@ -1,8 +1,26 @@
 from rest_framework import serializers
 
-from apps.carriers.models import LINES_OF_BUSINESS, Carrier, CarrierNote
+from apps.carriers.models import (
+    CARRIER_LICENSE_STATUSES,
+    CARRIER_STATUSES,
+    LINES_OF_BUSINESS,
+    Carrier,
+    CarrierNote,
+    CarrierStateLicense,
+)
 from apps.carriers.utils import normalize_aliases, normalize_lines
 from apps.contracts.utils import is_agent_accessible
+
+
+class CarrierLicenseSerializer(serializers.ModelSerializer):
+    """One state row as it appears on a carrier."""
+
+    state = serializers.CharField(source='state.code', read_only=True)
+
+    class Meta:
+        model = CarrierStateLicense
+        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date', 'life', 'health')
+        read_only_fields = fields
 
 
 class CarrierSerializer(serializers.ModelSerializer):
@@ -14,8 +32,10 @@ class CarrierSerializer(serializers.ModelSerializer):
         child=serializers.CharField(),
         source='state_codes',
         read_only=True,
-        help_text='Two-letter state codes, in code order.',
+        help_text="Two-letter state codes, in code order: the states of the carrier's licence rows.",
     )
+    licenses = serializers.SerializerMethodField(help_text='State rows, in state-code order.')
+    is_active = serializers.BooleanField(read_only=True, help_text='True only when status is "active".')
     agent_accessible = serializers.SerializerMethodField(
         help_text=(
             "True only when the carrier's live agency contract has a contract number: "
@@ -30,13 +50,20 @@ class CarrierSerializer(serializers.ModelSerializer):
             'name',
             'aliases',
             'lines_of_business',
+            'link',
             'available_states',
+            'licenses',
             'agent_accessible',
+            'status',
             'is_active',
             'created_at',
             'updated_at',
         )
         read_only_fields = fields
+
+    def get_licenses(self, carrier) -> list:
+        rows = sorted(carrier.licenses.all(), key=lambda row: row.state.code)
+        return CarrierLicenseSerializer(rows, many=True).data
 
     def get_agent_accessible(self, carrier) -> bool:
         return is_agent_accessible(carrier)
@@ -89,11 +116,48 @@ def _lines_field(required):
     )
 
 
-def _states_field():
-    return serializers.ListField(
-        child=serializers.CharField(min_length=2, max_length=2),
+def _link_field():
+    return serializers.URLField(
+        max_length=500,
         required=False,
-        help_text='Two-letter state codes the carrier is available in.',
+        allow_blank=True,
+        help_text="The carrier's site or agent portal. Blank for none.",
+    )
+
+
+def _status_field():
+    return serializers.ChoiceField(
+        choices=CARRIER_STATUSES,
+        required=False,
+        help_text='Defaults to active. is_active follows it: true only for active.',
+    )
+
+
+class LicenseInputSerializer(serializers.Serializer):
+    state = serializers.CharField(min_length=2, max_length=2, help_text='Two-letter state code.')
+    license_number = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
+    status = serializers.ChoiceField(choices=CARRIER_LICENSE_STATUSES, required=False, default='active')
+    start_date = serializers.DateField(required=False, allow_null=True, default=None, help_text='YYYY-MM-DD.')
+    end_date = serializers.DateField(
+        required=False, allow_null=True, default=None, help_text='YYYY-MM-DD. The expiration date.'
+    )
+    life = serializers.BooleanField(required=False, default=False, help_text='Covers life insurance.')
+    health = serializers.BooleanField(required=False, default=False, help_text='Covers health insurance.')
+
+    def validate(self, data):
+        start, end = data.get('start_date'), data.get('end_date')
+        if start and end and end < start:
+            raise serializers.ValidationError(
+                {'end_date': ['The expiration date must be on or after the start date.']}
+            )
+        return data
+
+
+def _licenses_field():
+    return serializers.ListField(
+        child=LicenseInputSerializer(),
+        required=False,
+        help_text="The carrier's states with their numbers, statuses, dates and lines; replaces the current set.",
     )
 
 
@@ -101,8 +165,9 @@ class CarrierCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
     aliases = _aliases_field()
     lines_of_business = _lines_field(required=True)
-    available_states = _states_field()
-    is_active = serializers.BooleanField(required=False)
+    link = _link_field()
+    licenses = _licenses_field()
+    status = _status_field()
 
     def validate_aliases(self, value):
         return normalize_aliases(value)
@@ -117,8 +182,9 @@ class CarrierUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255, required=False)
     aliases = _aliases_field()
     lines_of_business = _lines_field(required=False)
-    available_states = _states_field()
-    is_active = serializers.BooleanField(required=False)
+    link = _link_field()
+    licenses = _licenses_field()
+    status = _status_field()
 
     def validate_aliases(self, value):
         return normalize_aliases(value)

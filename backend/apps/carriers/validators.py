@@ -44,11 +44,27 @@ def ensure_lines_chosen(lines):
         raise ValidationError({'lines_of_business': ['Choose at least one line of business.']})
 
 
-def resolve_states(codes):
-    """The State rows for `codes` (two-letter, any case). Unknown codes are a 400."""
-    wanted = {code.strip().upper() for code in codes if code and code.strip()}
-    states = list(State.objects.filter(code__in=wanted))
-    unknown = sorted(wanted - {state.code for state in states})
+# What a state row gets for a field left out. A PATCH (partial) skips the
+# input serializer's own defaults, so they are filled in here.
+LICENSE_DEFAULTS = {
+    'license_number': '',
+    'status': 'active',
+    'start_date': None,
+    'end_date': None,
+    'life': False,
+    'health': False,
+}
+
+
+def resolve_licenses(licenses):
+    """The `licenses` input with each two-letter code swapped for its State,
+    ready for utils.sync_licenses. Unknown codes are a 400; a repeated state
+    keeps its last entry."""
+    wanted = {}
+    for item in licenses:
+        wanted[item['state'].strip().upper()] = item
+    states = {state.code: state for state in State.objects.filter(code__in=wanted)}
+    unknown = sorted(set(wanted) - set(states))
     if unknown:
-        raise ValidationError({'available_states': [f"Unknown state code: {', '.join(unknown)}."]})
-    return states
+        raise ValidationError({'licenses': [f"Unknown state code: {', '.join(unknown)}."]})
+    return [{**LICENSE_DEFAULTS, **item, 'state': states[code]} for code, item in wanted.items()]

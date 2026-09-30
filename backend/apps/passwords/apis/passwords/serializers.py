@@ -14,7 +14,7 @@ class AgentSummarySerializer(serializers.ModelSerializer):
 class CarrierSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Carrier
-        fields = ('id', 'name', 'is_active')
+        fields = ('id', 'name', 'status', 'is_active')
 
 
 class PasswordSerializer(serializers.ModelSerializer):
