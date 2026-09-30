@@ -6,7 +6,7 @@ from apps.base.managers import SoftDeleteManager
 from apps.base.models import BaseModel
 
 from .designations import Designation
-from .roles import ACTIONS, PERMISSION_LABELS, Role
+from .roles import ACTIONS, AGENT_ROLE_NAME, PERMISSION_LABELS, Role
 
 
 class UserManager(SoftDeleteManager, BaseUserManager):
@@ -115,9 +115,10 @@ class User(BaseModel, AbstractBaseUser):
         """{"dashboard": {"view": True, ...}, ...} from the role.
 
         One query, cached on this instance. A missing, inactive or
-        soft-deleted role grants nothing.
+        soft-deleted role grants nothing. An agent's account uses the role
+        named AGENT_ROLE_NAME, not its own.
         """
-        role = self.role
+        role = Role.objects.filter(name__iexact=AGENT_ROLE_NAME).first() if self.agent_id else self.role
         if role is None or role.is_deleted or not role.is_active:
             return {}
         return {
@@ -135,6 +136,9 @@ class User(BaseModel, AbstractBaseUser):
         if action not in ACTIONS:
             raise ValueError(f'Unknown permission action: {action!r}')
         if not self.is_active:
+            return False
+        # An agent's account sees only its own record, whatever the role grants.
+        if self.agent_id and not module.startswith('agent_view.'):
             return False
         if self.is_superuser:
             return True

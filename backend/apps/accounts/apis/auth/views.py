@@ -82,11 +82,18 @@ def agent_login(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def agent_home(request):
-    """This agent's own profile, appointments and certifications. Staff get a 404."""
+    """This agent's own record, one section per `agent_view` permission. Staff get a 404.
+
+    A section the role doesn't grant comes back null (and its flag in
+    `sections` false). Without "My details" the agent keeps only their name
+    and status; without "My licences" their licence rows are left out.
+    """
     from apps.agents.apis.agents.serializers import AgentSerializer
     from apps.agents.models import Agent
     from apps.contracts.apis.contracts.serializers import ContractSerializer
     from apps.contracts.models import CarrierContract
+    from apps.passwords.apis.passwords.serializers import PasswordSerializer
+    from apps.passwords.models import Password
     from apps.policies.apis.certifications.serializers import CertificationSerializer
     from apps.policies.models import Certification
 
@@ -102,23 +109,53 @@ def agent_home(request):
             'account_blocked',
         )
 
-    contracts = (
-        CarrierContract.objects.filter(agent=agent)
-        .select_related('agent', 'carrier')
-        .prefetch_related('appointed_states')
-        .order_by('carrier__name')
-    )
-    certifications = (
-        Certification.objects.filter(agent=agent)
-        .select_related('agent', 'policy_type')
-        .prefetch_related('carriers')
-        .order_by('policy_type__name')
-    )
+    sections = {
+        key: request.user.has_permission(f'agent_view.{key}', 'view')
+        for key in ('profile', 'licenses', 'contracts', 'certifications', 'passwords')
+    }
+
+    agent_data = AgentSerializer(agent).data
+    if not sections['profile']:
+        kept = ('id', 'name', 'is_active', 'licenses', 'created_at', 'updated_at')
+        agent_data = {
+            key: value if key in kept else ([] if key == 'aliases' else None if key == 'address' else '')
+            for key, value in agent_data.items()
+        }
+    if not sections['licenses']:
+        agent_data['licenses'] = []
+
+    contracts = None
+    if sections['contracts']:
+        contracts = ContractSerializer(
+            CarrierContract.objects.filter(agent=agent)
+            .select_related('agent', 'carrier')
+            .prefetch_related('appointed_states')
+            .order_by('carrier__name'),
+            many=True,
+        ).data
+    certifications = None
+    if sections['certifications']:
+        certifications = CertificationSerializer(
+            Certification.objects.filter(agent=agent)
+            .select_related('agent', 'policy_type')
+            .prefetch_related('carriers')
+            .order_by('policy_type__name'),
+            many=True,
+        ).data
+    passwords = None
+    if sections['passwords']:
+        passwords = PasswordSerializer(
+            Password.objects.filter(agent=agent).select_related('agent', 'carrier').order_by('carrier__name'),
+            many=True,
+        ).data
+
     return APIResponse(
         {
-            'agent': AgentSerializer(agent).data,
-            'contracts': ContractSerializer(contracts, many=True).data,
-            'certifications': CertificationSerializer(certifications, many=True).data,
+            'sections': sections,
+            'agent': agent_data,
+            'contracts': contracts,
+            'certifications': certifications,
+            'passwords': passwords,
         },
         'Profile fetched successfully.',
     )

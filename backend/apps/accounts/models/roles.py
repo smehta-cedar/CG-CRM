@@ -41,16 +41,18 @@ MODULES = {
         'label': 'Agents',
         'children': {},
     },
-    # What an agent sees of their own record once agents can sign in (they
-    # cannot yet: no User is linked to an Agent). Granted per section, so a
-    # role can show an agent their licences but not their portal passwords.
-    # Only ever scoped to the signed-in agent's own record.
+    # What an agent signed in as themselves sees of their own record
+    # (GET /auth/agent/). Granted per section, so a role can show an agent
+    # their licences but not their portal passwords. Only ever scoped to the
+    # signed-in agent's own record, and the only codes an agent's account
+    # can hold (User.has_permission).
     'agent_view': {
         'label': 'Agent view',
         'children': {
             'profile': 'My details',
             'licenses': 'My licences',
             'contracts': 'My carriers',
+            'certifications': 'My certifications',
             'passwords': 'My passwords',
             'requests': 'My requests',
         },
@@ -92,6 +94,11 @@ MODULES = {
 }
 
 ACTIONS = ('view', 'create', 'update', 'delete')
+
+# Agents' sign-ins are not on the Users page, so no one gives them a role
+# there: every agent account takes its permissions from the role with this
+# name (case-insensitive). No such role means an agent sees nothing.
+AGENT_ROLE_NAME = 'Agent'
 
 
 def _build_permission_labels():
