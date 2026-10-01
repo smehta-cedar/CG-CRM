@@ -35,7 +35,8 @@ contract_create = extend_schema(
     summary='Create a contract',
     description=(
         'One per agent at each carrier. Appointed states must be ones the carrier is available '
-        'in and the agent is licensed in. Records an "added" note.'
+        'in and the agent is licensed in. Records an "added" note. Also gives the agent a '
+        'certification per line of business of the carrier, due on the next deadline.'
     ),
     request=ContractCreateSerializer,
     responses={201: api_response(ContractSerializer), **error_responses(400, 401, 403)},

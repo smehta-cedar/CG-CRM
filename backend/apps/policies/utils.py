@@ -1,6 +1,9 @@
+import datetime
 import os
 
-from django.db import transaction
+from django.conf import settings
+from django.db import models, transaction
+from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
 from apps.policies.models import (
@@ -35,18 +38,11 @@ def diff_snapshots(before, after, fields):
 # --- policy types -----------------------------------------------------------
 
 # The order a policy type note lists changed fields in.
-NOTE_FIELDS = ('name', 'certification_scope', 'certification_carriers', 'status')
-
-# How a note shows each certification scope.
-SCOPE_LABELS = {
-    PolicyType.SCOPE_NONE: 'none',
-    PolicyType.SCOPE_SINGLE: 'single',
-    PolicyType.SCOPE_PER_CARRIER: 'per carrier',
-}
+NOTE_FIELDS = ('name', 'status')
 
 
 def policy_type_queryset():
-    return PolicyType.objects.prefetch_related('certification_carriers')
+    return PolicyType.objects.all()
 
 
 def get_policy_type_or_404(pk):
@@ -58,36 +54,27 @@ def search_policy_types(policy_types, search):
     return policy_types.filter(name__icontains=search)
 
 
-def filter_policy_types(policy_types, is_active=None, certification_scope=None):
-    """Narrow `policy_types` by is_active and the certification scope; None means no filter."""
+def filter_policy_types(policy_types, is_active=None):
+    """Narrow `policy_types` by is_active; None means no filter."""
     if is_active is not None:
         policy_types = policy_types.filter(is_active=is_active)
-    if certification_scope is not None:
-        policy_types = policy_types.filter(certification_scope=certification_scope)
     return policy_types
 
 
-def save_policy_type(policy_type, actor, carriers=None, **fields):
-    """Set `fields` on the policy type, replace its certification carriers
-    when `carriers` is given, and record `actor` as updated_by."""
+def save_policy_type(policy_type, actor, **fields):
+    """Set `fields` on the policy type and record `actor` as updated_by."""
     for name, value in fields.items():
         setattr(policy_type, name, value)
     policy_type.updated_by = actor
     policy_type.save(update_fields=[*fields, 'updated_by'])
-    if carriers is not None:
-        policy_type.certification_carriers.set(carriers)
     return policy_type
 
 
 def snapshot(policy_type):
-    """The policy type's fields as a note shows them: the scope as "none" /
-    "single" / "per carrier", the certification carriers as names joined
-    with ", ", the status as "active" / "inactive". Compare two of these to
-    find what changed."""
+    """The policy type's fields as a note shows them: the status as
+    "active" / "inactive". Compare two of these to find what changed."""
     return {
         'name': policy_type.name,
-        'certification_scope': SCOPE_LABELS[policy_type.certification_scope],
-        'certification_carriers': ', '.join(policy_type.certification_carrier_names),
         'status': 'active' if policy_type.is_active else 'inactive',
     }
 
@@ -175,54 +162,133 @@ def record_policy_note(policy, actor, kind, changes):
 
 # --- certifications ---------------------------------------------------------
 
+
+def certification_due_date(today=None):
+    """The next certification deadline on or after `today` (default: today),
+    on settings.CERTIFICATION_DUE_MONTH / _DAY."""
+    today = today or timezone.localdate()
+    due = datetime.date(today.year, settings.CERTIFICATION_DUE_MONTH, settings.CERTIFICATION_DUE_DAY)
+    return due if due >= today else due.replace(year=today.year + 1)
+
+
 # The order a certification note lists changed fields in.
-CERTIFICATION_NOTE_FIELDS = ('agent', 'policy_type', 'carriers', 'start_date', 'end_date', 'is_verified', 'status', 'file')
+CERTIFICATION_NOTE_FIELDS = (
+    'agent',
+    'carrier',
+    'line_of_business',
+    'due_date',
+    'start_date',
+    'end_date',
+    'is_verified',
+    'status',
+    'file',
+)
 
 
 def certification_queryset():
-    return Certification.objects.select_related('agent', 'policy_type').prefetch_related('carriers')
+    return Certification.objects.select_related('agent', 'carrier')
 
 
 def get_certification_or_404(pk):
     return get_object_or_404(certification_queryset(), pk=pk)
 
 
-def filter_certifications(certifications, agent=None, policy_type=None):
-    """Narrow `certifications` by agent and policy type; None means no filter."""
+def filter_certifications(certifications, agent=None, carrier=None, line_of_business=None):
+    """Narrow `certifications` by agent, carrier and line of business; None means no filter."""
     if agent is not None:
         certifications = certifications.filter(agent_id=agent)
-    if policy_type is not None:
-        certifications = certifications.filter(policy_type_id=policy_type)
+    if carrier is not None:
+        certifications = certifications.filter(carrier_id=carrier)
+    if line_of_business is not None:
+        certifications = certifications.filter(line_of_business=line_of_business)
     return certifications
 
 
-def save_certification(certification, actor, carriers=None, **fields):
-    """Set `fields` on the certification, replace its carriers when
-    `carriers` is given, and record `actor` as updated_by."""
+def save_certification(certification, actor, **fields):
+    """Set `fields` on the certification and record `actor` as updated_by."""
     for name, value in fields.items():
         setattr(certification, name, value)
     certification.updated_by = actor
     certification.save(update_fields=[*fields, 'updated_by'])
-    if carriers is not None:
-        certification.carriers.set(carriers)
     return certification
 
 
 def certification_snapshot(certification):
-    """The certification's fields as a note shows them: the agent and policy
-    type by name, the carriers as names joined with ", ", dates as YYYY-MM-DD or blank, the verified flag as "yes" /
-    "no", the status as "active" / "inactive", the PDF by its file name only
-    (blank when there is none). Compare two of these to find what changed."""
+    """The certification's fields as a note shows them: the agent and carrier
+    by name (carrier blank when there is none), dates as YYYY-MM-DD or blank,
+    the verified flag as "yes" / "no", the status as "active" / "inactive",
+    the PDF by its file name only (blank when there is none). Compare two of
+    these to find what changed."""
     return {
         'agent': certification.agent.name,
-        'policy_type': certification.policy_type.name,
-        'carriers': ', '.join(certification.carrier_names),
+        'carrier': certification.carrier.name if certification.carrier else '',
+        'line_of_business': certification.line_of_business,
+        'due_date': certification.due_date.isoformat() if certification.due_date else '',
         'start_date': certification.start_date.isoformat() if certification.start_date else '',
         'end_date': certification.end_date.isoformat() if certification.end_date else '',
         'is_verified': 'yes' if certification.is_verified else 'no',
         'status': 'active' if certification.is_active else 'inactive',
         'file': certification.file_name if certification.file else '',
     }
+
+
+def add_contract_certifications(agent, carrier, actor=None, due_date=None):
+    """Give `agent` one certification per line of business `carrier` writes,
+    due on `due_date` (default: the next deadline), and return the rows made
+    or filled in. Lines the agent already has with this carrier for that
+    deadline are skipped. A row with this carrier and no due date counts for
+    that deadline: one with a line just takes the date, one with no line
+    takes a missing line (and the date) before a new row is made. Each row
+    gets an "added" note, or "edited" for one filled in."""
+    due_date = due_date or certification_due_date()
+    rows = list(
+        Certification.objects.filter(agent=agent, carrier=carrier)
+        .filter(models.Q(due_date=due_date) | models.Q(due_date__isnull=True))
+        .select_related('agent', 'carrier')
+        .order_by('created_at')
+    )
+    touched = []
+
+    def fill_in(certification, **fields):
+        before = certification_snapshot(certification)
+        save_certification(certification, actor, **fields)
+        record_certification_note(
+            certification,
+            actor,
+            CertificationNote.KIND_EDITED,
+            diff_snapshots(before, certification_snapshot(certification), CERTIFICATION_NOTE_FIELDS),
+        )
+        touched.append(certification)
+
+    # Undated rows that already have a line keep it and take the deadline.
+    for certification in rows:
+        if certification.line_of_business and certification.due_date is None:
+            fill_in(certification, due_date=due_date)
+
+    have = {row.line_of_business for row in rows if row.line_of_business}
+    blank = [row for row in rows if not row.line_of_business]
+    for line in carrier.lines_of_business:
+        if line in have:
+            continue
+        if blank:
+            fill_in(blank.pop(0), line_of_business=line, due_date=due_date)
+        else:
+            certification = Certification.objects.create(
+                agent=agent,
+                carrier=carrier,
+                line_of_business=line,
+                due_date=due_date,
+                created_by=actor,
+                updated_by=actor,
+            )
+            record_certification_note(
+                certification,
+                actor,
+                CertificationNote.KIND_ADDED,
+                diff_snapshots({}, certification_snapshot(certification), CERTIFICATION_NOTE_FIELDS),
+            )
+            touched.append(certification)
+    return touched
 
 
 def upload_name(upload):

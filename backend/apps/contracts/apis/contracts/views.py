@@ -23,6 +23,7 @@ from apps.contracts.validators import (
     ensure_writing_number_free,
     resolve_states,
 )
+from apps.policies.utils import add_contract_certifications
 
 from . import swagger
 from .serializers import (
@@ -91,6 +92,8 @@ def contract_create(request):
         contract.appointed_states.set(states)
         # The note lists every filled field, as the contract now reads.
         record_note(contract, request.user, CarrierContractNote.KIND_ADDED, diff_snapshots({}, snapshot(contract)))
+        # The agent gets this year's certification for each of the carrier's lines.
+        add_contract_certifications(agent, carrier, request.user)
 
     return APIResponse(ContractSerializer(contract).data, 'Contract created successfully.', status=status.HTTP_201_CREATED)
 

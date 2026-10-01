@@ -73,14 +73,14 @@ MODULES = {
         'label': 'Storefront',
         'children': {},
     },
-    # The catalog of policy kinds (apps.policies). Carrier policies and
-    # certifications point at it; availability and agency contracts will too.
+    # The catalog of policy kinds (apps.policies). Carrier policies point at
+    # it; availability and agency contracts will too.
     'policy_types': {
         'label': 'Policy types',
         'children': {},
     },
-    # One agent certified for one policy type (apps.policies). Added from
-    # the agent's profile and from the policy type's row alike.
+    # An agent's yearly certification with a carrier for one line of
+    # business (apps.policies).
     'certifications': {
         'label': 'Certifications',
         'children': {},

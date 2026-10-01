@@ -123,6 +123,12 @@ USE_TZ = True
 PRIVATE_MEDIA_ROOT = BASE_DIR / 'private_media'
 
 
+# Agent certifications are yearly, all due on this month and day.
+
+CERTIFICATION_DUE_MONTH = 9
+CERTIFICATION_DUE_DAY = 15
+
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

@@ -137,9 +137,8 @@ def agent_home(request):
     if sections['certifications']:
         certifications = CertificationSerializer(
             Certification.objects.filter(agent=agent)
-            .select_related('agent', 'policy_type')
-            .prefetch_related('carriers')
-            .order_by('policy_type__name'),
+            .select_related('agent', 'carrier')
+            .order_by('due_date', 'carrier__name', 'line_of_business'),
             many=True,
         ).data
     passwords = None

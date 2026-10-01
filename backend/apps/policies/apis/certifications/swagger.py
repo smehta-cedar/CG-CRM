@@ -24,7 +24,7 @@ certification_list = extend_schema(
     operation_id='certifications_list',
     tags=TAGS,
     summary='List certifications',
-    description='Sorted by policy type name, then agent name.',
+    description='Sorted by agent name, then due date, carrier name and line of business.',
     parameters=[CertificationListQuerySerializer, *PAGINATION_PARAMETERS],
     responses={200: api_response(CertificationSerializer, paginated=True), **error_responses(400, 401, 403)},
 )
@@ -35,8 +35,7 @@ certification_create = extend_schema(
     tags=TAGS,
     summary='Create a certification',
     description=(
-        'One live row per agent and policy type; a duplicate pair is a 400 under policy_type. '
-        'When both dates are set the end must be on or after the start. '
+        'Only agent is required; nothing else is checked. due_date defaults to the next yearly deadline. '
         'Send multipart form data to attach a PDF (at most 10 MB; anything else is a 400 under file); '
         'uploading does not set is_verified. '
         'Records an "added" note listing every filled field.'
@@ -61,8 +60,7 @@ certification_detail = combine_schemas(
         tags=TAGS,
         summary='Update a certification',
         description=(
-            'Records an "edited" note when something changed. A duplicate pair is a 400 under '
-            'policy_type when policy_type was sent, otherwise under agent. '
+            'Records an "edited" note when something changed. '
             'Send multipart form data with file to replace the PDF; leaving file out keeps it.'
         ),
         request={
@@ -75,7 +73,7 @@ certification_detail = combine_schemas(
         methods=['DELETE'],
         tags=TAGS,
         summary='Delete a certification',
-        description='Soft delete: the certification is hidden and the pair can be added again.',
+        description='Soft delete: the certification is hidden.',
         responses={200: api_response(), **error_responses(401, 403, 404)},
     ),
 )
