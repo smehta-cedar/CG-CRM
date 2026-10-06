@@ -33,6 +33,7 @@ user_create = extend_schema(
     operation_id='users_create',
     tags=TAGS,
     summary='Create a user',
+    description='Only a superuser can send role_ids; anyone else gets a 403 unless the list is empty.',
     request=UserCreateSerializer,
     responses={201: api_response(UserSerializer), **error_responses(400, 401, 403)},
 )
@@ -49,6 +50,10 @@ user_detail = combine_schemas(
         methods=['PATCH'],
         tags=TAGS,
         summary='Update a user',
+        description=(
+            'Only a superuser can change role_ids; anyone else gets a 403 unless the list matches the '
+            "user's current roles."
+        ),
         request=UserUpdateSerializer,
         responses={200: api_response(UserSerializer), **error_responses(400, 401, 403, 404)},
     ),
@@ -101,7 +106,7 @@ user_notes_all = extend_schema(
 user_set_password = extend_schema(
     tags=TAGS,
     summary="Set a user's password",
-    description='The user is signed out everywhere and must log in with the new password.',
+    description='Superusers only. The user is signed out everywhere and must log in with the new password.',
     request=SetPasswordSerializer,
     responses={200: api_response(), **error_responses(400, 401, 403, 404)},
 )

@@ -21,7 +21,7 @@ from apps.base.api.authentication import TokenlessAuthentication
 from apps.base.api.response import APIResponse
 
 from . import swagger
-from ..users.serializers import UserSerializer
+from ..users.serializers import MeSerializer
 from .serializers import (
     AgentCodeRequestSerializer,
     AgentLoginSerializer,
@@ -186,14 +186,14 @@ def logout(request):
 @permission_classes([IsAuthenticated])
 def me(request):
     if request.method == 'GET':
-        return APIResponse(UserSerializer(request.user).data, 'Profile fetched successfully.')
+        return APIResponse(MeSerializer(request.user).data, 'Profile fetched successfully.')
 
     # partial=True: only the fields that were sent get updated.
     serializer = ProfileUpdateSerializer(data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
     # request.user twice: the user being changed, and the one recorded as updated_by.
     user = save_user(request.user, request.user, **serializer.validated_data)
-    return APIResponse(UserSerializer(user).data, 'Profile updated successfully.')
+    return APIResponse(MeSerializer(user).data, 'Profile updated successfully.')
 
 
 @swagger.change_password

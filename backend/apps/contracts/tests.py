@@ -196,8 +196,7 @@ class ContractPermissionTests(ContractAPITestCase):
         self.assertEqual(self.client.get(self.list_url()).status_code, 403)
 
     def test_view_only_role_can_list_but_not_create(self):
-        self.staff.role = make_role(can_view=True)
-        self.staff.save()
+        self.staff.roles.set([make_role(can_view=True)])
         self.assertEqual(self.client.get(self.list_url()).status_code, 200)
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 403)
 

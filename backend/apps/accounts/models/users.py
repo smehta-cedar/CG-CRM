@@ -6,7 +6,7 @@ from apps.base.managers import SoftDeleteManager
 from apps.base.models import BaseModel
 
 from .designations import Designation
-from .roles import ACTIONS, AGENT_ROLE_NAME, PERMISSION_LABELS, Role
+from .roles import ACTIONS, AGENT_ROLE_NAME, PERMISSION_LABELS, Role, RolePermission
 
 
 class UserManager(SoftDeleteManager, BaseUserManager):
@@ -42,7 +42,7 @@ class UserManager(SoftDeleteManager, BaseUserManager):
 
 
 class User(BaseModel, AbstractBaseUser):
-    """Logs in with email. Access comes from `role`, not Django permissions.
+    """Logs in with email. Access comes from `roles`, not Django permissions.
 
     BaseModel.is_active doubles as the block switch: Django refuses to log in
     an inactive user.
@@ -62,13 +62,8 @@ class User(BaseModel, AbstractBaseUser):
         blank=True,
         related_name='users',
     )
-    role = models.ForeignKey(
-        Role,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name='users',
-    )
+    # Any number of roles; what they grant adds up. None means no access.
+    roles = models.ManyToManyField(Role, blank=True, related_name='users')
 
     # Set for an agent who signs in with a work email and a code. Staff accounts leave it empty.
     agent = models.OneToOneField(
@@ -112,19 +107,22 @@ class User(BaseModel, AbstractBaseUser):
 
     @cached_property
     def role_permissions(self):
-        """{"dashboard": {"view": True, ...}, ...} from the role.
+        """{"dashboard": {"view": True, ...}, ...} from the roles.
 
-        One query, cached on this instance. A missing, inactive or
-        soft-deleted role grants nothing. An agent's account uses the role
-        named AGENT_ROLE_NAME, not its own.
+        Each action is allowed when any of the roles allows it. Cached on
+        this instance. No roles grant nothing, nor does an inactive or
+        soft-deleted one. An agent's account uses the role named
+        AGENT_ROLE_NAME, not its own.
         """
-        role = Role.objects.filter(name__iexact=AGENT_ROLE_NAME).first() if self.agent_id else self.role
-        if role is None or role.is_deleted or not role.is_active:
-            return {}
-        return {
-            permission.module: {action: getattr(permission, f'can_{action}') for action in ACTIONS}
-            for permission in role.permissions.all()
-        }
+        roles = Role.objects.filter(name__iexact=AGENT_ROLE_NAME) if self.agent_id else self.roles.all()
+        # The default managers already skip soft-deleted roles and permission rows.
+        permissions = RolePermission.objects.filter(role__in=roles.filter(is_active=True))
+        granted = {}
+        for permission in permissions:
+            flags = granted.setdefault(permission.module, dict.fromkeys(ACTIONS, False))
+            for action in ACTIONS:
+                flags[action] = flags[action] or getattr(permission, f'can_{action}')
+        return granted
 
     def has_permission(self, module, action='view'):
         """Whether this user may perform `action` on `module`.

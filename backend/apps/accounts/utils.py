@@ -12,24 +12,25 @@ from apps.accounts.models.roles import ACTIONS, PERMISSION_LABELS
 
 
 def get_user_or_404(pk):
-    return get_object_or_404(User.objects.select_related('role', 'designation'), pk=pk)
+    return get_object_or_404(User.objects.select_related('designation').prefetch_related('roles'), pk=pk)
 
 
 def search_users(users, search):
-    """Narrow `users` to those whose email, name, phone, role or designation matches."""
+    """Narrow `users` to those whose email, name, phone, any role or designation matches."""
+    # distinct: a user with two matching roles would otherwise come back twice.
     return users.filter(
         Q(email__icontains=search)
         | Q(full_name__icontains=search)
         | Q(phone__icontains=search)
-        | Q(role__name__icontains=search)
+        | Q(roles__name__icontains=search)
         | Q(designation__name__icontains=search)
-    )
+    ).distinct()
 
 
 def filter_users(users, role_id=None, designation_id=None, is_active=None):
-    """Narrow `users` by role, designation and active status; None means no filter."""
+    """Narrow `users` by role (any they hold), designation and active status; None means no filter."""
     if role_id:
-        users = users.filter(role_id=role_id)
+        users = users.filter(roles=role_id)
     if designation_id:
         users = users.filter(designation_id=designation_id)
     if is_active is not None:
@@ -43,11 +44,15 @@ def normalize_email(email):
 
 
 def save_user(user, actor, **fields):
-    """Set `fields` on the user and record `actor` as updated_by."""
+    """Set `fields` on the user and record `actor` as updated_by. `roles`, a
+    list of Role, replaces the user's roles."""
+    roles = fields.pop('roles', None)
     for name, value in fields.items():
         setattr(user, name, value)
     user.updated_by = actor
     user.save(update_fields=[*fields, 'updated_by'])
+    if roles is not None:
+        user.roles.set(roles)
     return user
 
 
@@ -74,18 +79,19 @@ def revoke_tokens(user):
 
 
 # The order a user note lists changed fields in. "password" is recorded redacted.
-NOTE_FIELDS = ('name', 'email', 'phone', 'role', 'status', 'password')
+# Notes written before users could hold several roles have "role" instead of "roles".
+NOTE_FIELDS = ('name', 'email', 'phone', 'roles', 'status', 'password')
 REDACTED_FIELDS = ('password',)
 
 
 def snapshot(user):
-    """The user's fields as a note shows them: the role by name, the status as
+    """The user's fields as a note shows them: the roles by name, the status as
     active / inactive. The password hash is compared but never written."""
     return {
         'name': user.full_name,
         'email': user.email,
         'phone': user.phone,
-        'role': user.role.name if user.role else '',
+        'roles': ', '.join(sorted((role.name for role in user.roles.all()), key=str.lower)),
         'status': 'active' if user.is_active else 'inactive',
         'password': user.password,
     }

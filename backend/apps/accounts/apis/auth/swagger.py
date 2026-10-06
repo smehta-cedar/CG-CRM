@@ -4,7 +4,7 @@ from rest_framework_simplejwt.serializers import TokenBlacklistSerializer
 
 from apps.base.api.schema import api_response, combine_schemas, error_responses
 
-from ..users.serializers import UserSerializer
+from ..users.serializers import MeSerializer
 from .serializers import (
     AgentCodeRequestSerializer,
     AgentLoginSerializer,
@@ -103,14 +103,14 @@ me = combine_schemas(
         methods=['GET'],
         tags=TAGS,
         summary='Get my profile',
-        responses={200: api_response(UserSerializer), **error_responses(401)},
+        responses={200: api_response(MeSerializer), **error_responses(401)},
     ),
     extend_schema(
         methods=['PATCH'],
         tags=TAGS,
         summary='Update my profile',
         request=ProfileUpdateSerializer,
-        responses={200: api_response(UserSerializer), **error_responses(400, 401)},
+        responses={200: api_response(MeSerializer), **error_responses(400, 401)},
     ),
 )
 

@@ -14,8 +14,10 @@ class NotificationTestCase(APITestCase):
         admin_role = Role.objects.create(name='Admin')
         staff_role = Role.objects.create(name='Staff')
         RolePermission.objects.create(role=staff_role, module='requests', can_view=True, can_create=True)
-        self.role_admin = User.objects.create_user(email='boss@example.com', password='x', full_name='Boss', role=admin_role)
-        self.staff = User.objects.create_user(email='staff@example.com', password='x', full_name='Sam Staff', role=staff_role)
+        self.role_admin = User.objects.create_user(email='boss@example.com', password='x', full_name='Boss')
+        self.role_admin.roles.add(admin_role)
+        self.staff = User.objects.create_user(email='staff@example.com', password='x', full_name='Sam Staff')
+        self.staff.roles.add(staff_role)
         self.agent = Agent.objects.create(name='Maria Alva', npn='1')
         self.carrier = Carrier.objects.create(name='Humana', lines_of_business=['MAPD'])
 
