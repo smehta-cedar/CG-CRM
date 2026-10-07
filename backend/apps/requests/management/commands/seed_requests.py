@@ -127,17 +127,17 @@ class Command(BaseCommand):
         user = User.all_objects.filter(email=SHOP_EMAIL).first()
         if user is None:
             password = password or secrets.token_urlsafe(18)
-            User.objects.create_user(email=SHOP_EMAIL, password=password, full_name='Shop', role=role)
+            user = User.objects.create_user(email=SHOP_EMAIL, password=password, full_name='Shop')
+            user.roles.add(role)
             return f'Shop account {SHOP_EMAIL} created. SHOP_API_PASSWORD={password}  (shown once)'
         if password:
             user.set_password(password)
-            user.role = role
             user.is_active = True
             user.save()
+            user.roles.add(role)
             return f'Shop account {SHOP_EMAIL} password updated.'
-        if user.role_id != role.pk:
-            user.role = role
-            user.save(update_fields=['role', 'updated_at'])
+        # Adds the shop role and leaves any others the account holds.
+        user.roles.add(role)
         return None
 
     def _load(self, path, optional=False):

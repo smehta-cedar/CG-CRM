@@ -22,13 +22,15 @@ def ensure_not_self(actor, user, message):
         raise PermissionDenied(message)
 
 
-def ensure_own_role_unchanged(actor, user, new_role):
-    """Nobody but a superuser can change their own role."""
-    if actor.pk != user.pk or actor.is_superuser:
+def ensure_roles_unchanged(actor, user, new_roles):
+    """Only a superuser can change anyone's roles: roles decide what a user may
+    do, so whoever could set them could give themselves anything. Sending the
+    roles the user already holds is allowed. `user` is None for a new user."""
+    if actor.is_superuser:
         return
-    new_role_id = new_role.pk if new_role else None
-    if new_role_id != user.role_id:
-        raise PermissionDenied('You cannot change your own role.')
+    current = {role.pk for role in user.roles.all()} if user else set()
+    if {role.pk for role in new_roles} != current:
+        raise PermissionDenied('Only a superuser can change roles.')
 
 
 def ensure_email_free(email):

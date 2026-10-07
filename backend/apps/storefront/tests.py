@@ -135,7 +135,6 @@ class StorefrontPermissionTests(StorefrontAPITestCase):
 
     def test_view_only_role_can_list_but_not_create(self):
         # The user's permissions are cached per instance, so the role goes on before the first request.
-        self.staff.role = make_role(can_view=True)
-        self.staff.save()
+        self.staff.roles.set([make_role(can_view=True)])
         self.assertEqual(self.client.get(self.url('list')).status_code, 200)
         self.assertEqual(self.client.post(self.url('create'), SAMPLE, format='json').status_code, 403)

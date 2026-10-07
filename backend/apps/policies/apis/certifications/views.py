@@ -11,6 +11,7 @@ from apps.base.api.response import APIResponse
 from apps.policies.models import Certification, CertificationNote
 from apps.policies.utils import (
     CERTIFICATION_NOTE_FIELDS,
+    certification_due_date,
     certification_queryset,
     certification_snapshot,
     delete_file_on_commit,
@@ -21,14 +22,7 @@ from apps.policies.utils import (
     save_certification,
     upload_name,
 )
-from apps.policies.validators import (
-    ensure_dates_in_order,
-    ensure_pair_free,
-    ensure_pdf,
-    resolve_agent,
-    resolve_covered_carriers,
-    resolve_policy_type,
-)
+from apps.policies.validators import ensure_pdf, resolve_agent, resolve_carrier
 
 from . import swagger
 from .serializers import (
@@ -46,7 +40,7 @@ CAN_MANAGE_CERTIFICATIONS = module_permission('certifications')
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, CAN_MANAGE_CERTIFICATIONS])
 def certification_list(request):
-    # Check the ?agent= and ?policy_type= values; bad ones give a 400.
+    # Check the ?agent=, ?carrier= and ?line_of_business= values; bad ones give a 400.
     query = CertificationListQuerySerializer(data=request.query_params.dict())
     query.is_valid(raise_exception=True)
     filters = query.validated_data
@@ -54,11 +48,12 @@ def certification_list(request):
     certifications = filter_certifications(
         certification_queryset(),
         agent=filters.get('agent'),
-        policy_type=filters.get('policy_type'),
+        carrier=filters.get('carrier'),
+        line_of_business=filters.get('line_of_business'),
     )
 
     # Cut the requested page (?page=, ?page_size=); meta holds the page numbers and totals.
-    page, meta = paginate(request, certifications.order_by('policy_type__name', 'agent__name'))
+    page, meta = paginate(request, certifications.order_by('agent__name', 'due_date', 'carrier__name', 'line_of_business'))
     serializer = CertificationSerializer(page, many=True)
     return APIResponse(serializer.data, 'Certifications fetched successfully.', meta=meta)
 
@@ -71,14 +66,9 @@ def certification_create(request):
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
 
+    # Nothing else is checked: a certification is an add-on.
     agent = resolve_agent(data['agent'])
-    policy_type = resolve_policy_type(data['policy_type'])
-    # Both were sent, so the pair is reported as the policy type being taken for the agent.
-    ensure_pair_free(agent, policy_type, field='policy_type')
-    carriers = resolve_covered_carriers(data.get('carriers', []), policy_type)
-    start_date = data.get('start_date')
-    end_date = data.get('end_date')
-    ensure_dates_in_order(start_date, end_date)
+    carrier = resolve_carrier(data['carrier']) if data.get('carrier') else None
     upload = data.get('file')
     if upload is not None:
         ensure_pdf(upload)
@@ -86,9 +76,11 @@ def certification_create(request):
     with transaction.atomic():
         certification = Certification.objects.create(
             agent=agent,
-            policy_type=policy_type,
-            start_date=start_date,
-            end_date=end_date,
+            carrier=carrier,
+            line_of_business=data.get('line_of_business', ''),
+            due_date=data.get('due_date') or certification_due_date(),
+            start_date=data.get('start_date'),
+            end_date=data.get('end_date'),
             is_verified=data.get('is_verified', False),
             file=upload,
             file_name=upload_name(upload) if upload is not None else '',
@@ -96,7 +88,6 @@ def certification_create(request):
             created_by=request.user,
             updated_by=request.user,
         )
-        certification.carriers.set(carriers)
         # The note lists every filled field, as the certification now reads.
         record_certification_note(
             certification,
@@ -127,36 +118,11 @@ def certification_detail(request, pk):
         serializer.is_valid(raise_exception=True)
         fields = dict(serializer.validated_data)
 
+        # Nothing else is checked: a certification is an add-on.
         if 'agent' in fields:
             fields['agent'] = resolve_agent(fields['agent'])
-        if 'policy_type' in fields:
-            fields['policy_type'] = resolve_policy_type(fields['policy_type'])
-
-        # The pair only has to be free when it is actually changing. The error
-        # sits under the side that was sent: the one the user chose.
-        agent = fields.get('agent', certification.agent)
-        policy_type = fields.get('policy_type', certification.policy_type)
-        if agent != certification.agent or policy_type != certification.policy_type:
-            ensure_pair_free(
-                agent,
-                policy_type,
-                field='policy_type' if 'policy_type' in fields else 'agent',
-                exclude=certification,
-            )
-
-        # Carriers are checked when they were sent or the policy type changed;
-        # a type that is not per carrier clears them.
-        carriers = None
-        pks = fields.pop('carriers', None)
-        if pks is not None:
-            carriers = resolve_covered_carriers(pks, policy_type)
-        elif policy_type != certification.policy_type:
-            carriers = resolve_covered_carriers([], policy_type)
-
-        ensure_dates_in_order(
-            fields.get('start_date', certification.start_date),
-            fields.get('end_date', certification.end_date),
-        )
+        if 'carrier' in fields:
+            fields['carrier'] = resolve_carrier(fields['carrier']) if fields['carrier'] else None
 
         # A new PDF replaces the stored one; no file in the request keeps it.
         replaced = None
@@ -167,7 +133,7 @@ def certification_detail(request, pk):
 
         before = certification_snapshot(certification)
         with transaction.atomic():
-            save_certification(certification, request.user, carriers=carriers, **fields)
+            save_certification(certification, request.user, **fields)
             if replaced:
                 delete_file_on_commit(certification.file, replaced)
             record_certification_note(

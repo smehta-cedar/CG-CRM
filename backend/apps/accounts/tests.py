@@ -19,7 +19,7 @@ class UserNotesTests(APITestCase):
     def test_create_records_added_note_with_password_redacted(self):
         response = self.client.post(
             self.url('create'),
-            {'email': 'new@example.com', 'full_name': 'New User', 'password': 'Str0ng-pass-word!', 'role_id': str(self.role.pk)},
+            {'email': 'new@example.com', 'full_name': 'New User', 'password': 'Str0ng-pass-word!', 'role_ids': [str(self.role.pk)]},
             format='json',
         )
         self.assertEqual(response.status_code, 201, response.data)
@@ -30,7 +30,7 @@ class UserNotesTests(APITestCase):
             [
                 {'field': 'name', 'from': '', 'to': 'New User'},
                 {'field': 'email', 'from': '', 'to': 'new@example.com'},
-                {'field': 'role', 'from': '', 'to': 'Staff'},
+                {'field': 'roles', 'from': '', 'to': 'Staff'},
                 {'field': 'status', 'from': '', 'to': 'active'},
                 {'field': 'password', 'from': '', 'to': '', 'redacted': True},
             ],
@@ -64,6 +64,44 @@ class UserNotesTests(APITestCase):
         response = self.client.get(self.url('notes-all'))
         self.assertEqual(response.data['meta']['total_items'], 4)
 
+    def test_user_holds_several_roles(self):
+        ops = Role.objects.create(name='Ops')
+        response = self.client.post(
+            self.url('create'),
+            {
+                'email': 'two@example.com',
+                'full_name': 'Two Roles',
+                'password': 'Str0ng-pass-word!',
+                'role_ids': [str(self.role.pk), str(ops.pk)],
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(sorted(role['name'] for role in response.data['data']['roles']), ['Ops', 'Staff'])
+        user_id = response.data['data']['id']
+
+        # Search matching both roles still lists the user once; ?role_id= matches either role.
+        response = self.client.get(self.url('list'), {'search': 's'})
+        self.assertEqual([user['id'] for user in response.data['data']].count(user_id), 1)
+        for role in (self.role, ops):
+            response = self.client.get(self.url('list'), {'role_id': str(role.pk)})
+            self.assertIn(user_id, [user['id'] for user in response.data['data']])
+
+        # The sent list replaces the roles; [] removes them all.
+        response = self.client.patch(self.url('detail', user_id), {'role_ids': [str(ops.pk)]}, format='json')
+        self.assertEqual([role['name'] for role in response.data['data']['roles']], ['Ops'])
+        response = self.client.patch(self.url('detail', user_id), {'role_ids': []}, format='json')
+        self.assertEqual(response.data['data']['roles'], [])
+        changes = [note.changes for note in UserNote.objects.filter(user_id=user_id, kind='edited')]
+        self.assertIn([{'field': 'roles', 'from': 'Ops, Staff', 'to': 'Ops'}], changes)
+        self.assertIn([{'field': 'roles', 'from': 'Ops', 'to': ''}], changes)
+
+    def test_inactive_role_cannot_be_assigned(self):
+        off = Role.objects.create(name='Off', is_active=False)
+        user = User.objects.create_user(email='u@example.com', password='Str0ng-pass-word!', full_name='U')
+        response = self.client.patch(self.url('detail', user.pk), {'role_ids': [str(off.pk)]}, format='json')
+        self.assertEqual(response.status_code, 400)
+
     def test_patch_without_change_writes_no_note(self):
         user = User.objects.create_user(email='u@example.com', password='Str0ng-pass-word!', full_name='U')
         self.client.patch(self.url('detail', user.pk), {'full_name': 'U'}, format='json')
@@ -80,6 +118,76 @@ class UserNotesTests(APITestCase):
         self.assertEqual([role['name'] for role in response.data['data']], ['Admin', 'Staff'])
 
 
+class UserManagerLimitsTests(APITestCase):
+    """What someone with every `users` action may do short of being a superuser."""
+
+    def setUp(self):
+        manage = Role.objects.create(name='User manager')
+        RolePermission.objects.create(
+            role=manage, module='users', can_view=True, can_create=True, can_update=True, can_delete=True
+        )
+        self.manager = User.objects.create_user(email='hr@example.com', password='Str0ng-pass-word!', full_name='HR')
+        self.manager.roles.add(manage)
+        self.admin_role = Role.objects.create(name='Admin')
+        self.client.force_authenticate(self.manager)
+
+    def url(self, name, *args):
+        return reverse(f'accounts:apis:users:{name}', args=args)
+
+    def make_user(self, *roles):
+        user = User.objects.create_user(email='u@example.com', password='Str0ng-pass-word!', full_name='U')
+        user.roles.add(*roles)
+        return user
+
+    def test_cannot_create_a_user_with_roles(self):
+        body = {'email': 'new@example.com', 'full_name': 'New', 'password': 'Str0ng-pass-word!'}
+        response = self.client.post(self.url('create'), {**body, 'role_ids': [str(self.admin_role.pk)]}, format='json')
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(User.objects.filter(email='new@example.com').exists())
+        # Without roles, or with an empty list, the user is created with no access.
+        response = self.client.post(self.url('create'), {**body, 'role_ids': []}, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['data']['roles'], [])
+
+    def test_cannot_change_anyones_roles(self):
+        user = self.make_user()
+        for target in (user, self.manager):
+            response = self.client.patch(
+                self.url('detail', target.pk), {'role_ids': [str(self.admin_role.pk)]}, format='json'
+            )
+            self.assertEqual(response.status_code, 403)
+            self.assertFalse(target.roles.filter(pk=self.admin_role.pk).exists())
+
+    def test_can_edit_other_fields_and_resend_same_roles(self):
+        user = self.make_user(self.admin_role)
+        response = self.client.patch(
+            self.url('detail', user.pk),
+            {'full_name': 'U Two', 'phone': '555', 'role_ids': [str(self.admin_role.pk)]},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['full_name'], 'U Two')
+        self.assertEqual(self.client.post(self.url('block', user.pk)).status_code, 200)
+        self.assertEqual(self.client.post(self.url('unblock', user.pk)).status_code, 200)
+
+    def test_cannot_set_a_password(self):
+        user = self.make_user(self.admin_role)
+        body = {'new_password': 'An0ther-pass-word!', 'confirm_password': 'An0ther-pass-word!'}
+        for target in (user, self.manager):
+            self.assertEqual(self.client.post(self.url('set-password', target.pk), body, format='json').status_code, 403)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('Str0ng-pass-word!'))
+
+    def test_superuser_can_do_both(self):
+        admin = User.objects.create_superuser(email='admin@example.com', password='Sup3r-secret!', full_name='Admin')
+        self.client.force_authenticate(admin)
+        user = self.make_user()
+        response = self.client.patch(self.url('detail', user.pk), {'role_ids': [str(self.admin_role.pk)]}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        body = {'new_password': 'An0ther-pass-word!', 'confirm_password': 'An0ther-pass-word!'}
+        self.assertEqual(self.client.post(self.url('set-password', user.pk), body, format='json').status_code, 200)
+
+
 class RolesApiTests(APITestCase):
     """Roles are read by whoever may see users and changed by superusers only."""
 
@@ -94,7 +202,9 @@ class RolesApiTests(APITestCase):
         """A non-superuser whose role may view users."""
         role = Role.objects.create(name='Staff')
         RolePermission.objects.create(role=role, module='users', can_view=True)
-        return User.objects.create_user(email='staff@example.com', password='Str0ng-pass-word!', full_name='Staff', role=role)
+        user = User.objects.create_user(email='staff@example.com', password='Str0ng-pass-word!', full_name='Staff')
+        user.roles.add(role)
+        return user
 
     def test_create_with_permissions(self):
         response = self.client.post(
@@ -122,7 +232,8 @@ class RolesApiTests(APITestCase):
         self.assertEqual(set(flags), set(PERMISSION_LABELS))
         self.assertFalse(any(flags['users'][f'can_{action}'] for action in ('view', 'create', 'update', 'delete')))
         role = Role.objects.get(pk=data['id'])
-        holder = User.objects.create_user(email='ops@example.com', password='Str0ng-pass-word!', full_name='Ops', role=role)
+        holder = User.objects.create_user(email='ops@example.com', password='Str0ng-pass-word!', full_name='Ops')
+        holder.roles.add(role)
         self.assertTrue(holder.has_permission('agents', 'create'))
         self.assertFalse(holder.has_permission('users', 'view'))
 
@@ -158,30 +269,80 @@ class RolesApiTests(APITestCase):
 
     def test_delete_refused_while_users_hold_the_role(self):
         staff = self.make_staff()
-        response = self.client.delete(self.url('detail', staff.role_id))
+        role = staff.roles.get()
+        response = self.client.delete(self.url('detail', role.pk))
         self.assertEqual(response.status_code, 400)
         self.assertIn('still have this role', response.data['message'])
         staff.delete()
-        response = self.client.delete(self.url('detail', staff.role_id))
+        response = self.client.delete(self.url('detail', role.pk))
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertFalse(Role.objects.filter(pk=staff.role_id).exists())
+        self.assertFalse(Role.objects.filter(pk=role.pk).exists())
 
     def test_non_superuser_can_read_but_not_change(self):
         staff = self.make_staff()
         self.client.force_authenticate(staff)
         self.assertEqual(self.client.get(self.url('list')).status_code, 200)
-        self.assertEqual(self.client.get(self.url('detail', staff.role_id)).status_code, 200)
+        self.assertEqual(self.client.get(self.url('detail', staff.roles.get().pk)).status_code, 200)
         self.assertEqual(self.client.get(self.url('modules')).status_code, 403)
         self.assertEqual(self.client.post(self.url('create'), {'name': 'Mine'}, format='json').status_code, 403)
         self.assertEqual(
-            self.client.patch(self.url('detail', staff.role_id), {'name': 'Mine'}, format='json').status_code, 403
+            self.client.patch(self.url('detail', staff.roles.get().pk), {'name': 'Mine'}, format='json').status_code, 403
         )
-        self.assertEqual(self.client.delete(self.url('detail', staff.role_id)).status_code, 403)
+        self.assertEqual(self.client.delete(self.url('detail', staff.roles.get().pk)).status_code, 403)
 
     def test_modules_and_user_count(self):
         staff = self.make_staff()
         response = self.client.get(self.url('modules'))
         self.assertEqual(response.status_code, 200)
         self.assertEqual([module['code'] for module in response.data['data']], list(PERMISSION_LABELS))
-        response = self.client.get(self.url('detail', staff.role_id))
+        response = self.client.get(self.url('detail', staff.roles.get().pk))
         self.assertEqual(response.data['data']['user_count'], 1)
+
+
+class MePermissionsTests(APITestCase):
+    """GET /auth/me/ lists what the signed-in user's role lets them do, for the sidebar."""
+
+    url = reverse('accounts:apis:auth:me')
+
+    def test_role_user_gets_only_granted_modules(self):
+        role = Role.objects.create(name='Staff')
+        RolePermission.objects.create(role=role, module='carriers', can_view=True, can_update=True)
+        user = User.objects.create_user(email='s@example.com', password='Str0ng-pass-word!', full_name='S')
+        user.roles.add(role)
+        self.client.force_authenticate(user)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data['data']['permissions'],
+            {'carriers': {'view': True, 'create': False, 'update': True, 'delete': False}},
+        )
+
+    def test_superuser_gets_every_module(self):
+        admin = User.objects.create_superuser(email='a@example.com', password='Sup3r-secret!', full_name='A')
+        self.client.force_authenticate(admin)
+        permissions = self.client.get(self.url).data['data']['permissions']
+        self.assertEqual(set(permissions), set(PERMISSION_LABELS))
+
+    def test_roles_add_up_and_no_role_means_nothing(self):
+        viewer = Role.objects.create(name='Viewer')
+        RolePermission.objects.create(role=viewer, module='carriers', can_view=True)
+        editor = Role.objects.create(name='Editor')
+        RolePermission.objects.create(role=editor, module='carriers', can_view=True, can_update=True)
+        RolePermission.objects.create(role=editor, module='agents', can_view=True)
+        off = Role.objects.create(name='Off', is_active=False)
+        RolePermission.objects.create(role=off, module='users', can_view=True, can_delete=True)
+        user = User.objects.create_user(email='s@example.com', password='Str0ng-pass-word!', full_name='S')
+        self.client.force_authenticate(user)
+        self.assertEqual(self.client.get(self.url).data['data']['permissions'], {})
+
+        user.roles.add(viewer, editor, off)
+        # A fresh instance: role_permissions is cached per instance, as it is per request.
+        self.client.force_authenticate(User.objects.get(pk=user.pk))
+        permissions = self.client.get(self.url).data['data']['permissions']
+        self.assertEqual(
+            permissions,
+            {
+                'carriers': {'view': True, 'create': False, 'update': True, 'delete': False},
+                'agents': {'view': True, 'create': False, 'update': False, 'delete': False},
+            },
+        )

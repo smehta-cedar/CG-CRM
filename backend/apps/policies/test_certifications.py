@@ -1,30 +1,32 @@
+import datetime
+import io
 import shutil
 import tempfile
+from unittest import mock
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Role, RolePermission, User
-from apps.agency.models import Agency
 from apps.agents.models import Agent
 from apps.carriers.models import Carrier
-from apps.contracts.models import AgencyCarrierContract
 
-from .models import Certification, CertificationNote, PolicyType
+from .models import Certification, CertificationNote
+from .utils import add_contract_certifications, certification_due_date
 
 
 def make_agent(name='Maria Alva', npn='17654321', **overrides):
     return Agent.objects.create(name=name, npn=npn, **overrides)
 
 
-def make_policy_type(name='Medicare Advantage', **overrides):
-    return PolicyType.objects.create(name=name, **overrides)
+def make_carrier(name='Humana', lines=('MAPD',), **overrides):
+    return Carrier.objects.create(name=name, lines_of_business=list(lines), **overrides)
 
 
-def make_certification(agent, policy_type, **overrides):
-    return Certification.objects.create(agent=agent, policy_type=policy_type, **overrides)
+def make_certification(agent, carrier=None, line_of_business='', **overrides):
+    return Certification.objects.create(agent=agent, carrier=carrier, line_of_business=line_of_business, **overrides)
 
 
 def make_role(module, **flags):
@@ -33,15 +35,28 @@ def make_role(module, **flags):
     return role
 
 
+class CertificationDueDateTests(SimpleTestCase):
+    def test_next_deadline_on_or_after_today(self):
+        self.assertEqual(certification_due_date(datetime.date(2026, 3, 1)), datetime.date(2026, 9, 15))
+        self.assertEqual(certification_due_date(datetime.date(2026, 9, 15)), datetime.date(2026, 9, 15))
+        self.assertEqual(certification_due_date(datetime.date(2026, 10, 1)), datetime.date(2027, 9, 15))
+
+    @override_settings(CERTIFICATION_DUE_MONTH=12, CERTIFICATION_DUE_DAY=31)
+    def test_deadline_comes_from_settings(self):
+        self.assertEqual(certification_due_date(datetime.date(2026, 10, 1)), datetime.date(2026, 12, 31))
+
+
 class CertificationAPITestCase(APITestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser(email='admin@example.com', password='Sup3r-secret!', full_name='Admin')
         self.client.force_authenticate(self.admin)
         self.agent = make_agent()
-        self.policy_type = make_policy_type()
+        self.humana = make_carrier()
         self.sample = {
             'agent': str(self.agent.pk),
-            'policy_type': str(self.policy_type.pk),
+            'carrier': str(self.humana.pk),
+            'line_of_business': 'MAPD',
+            'due_date': '2027-09-15',
             'start_date': '2026-01-01',
             'end_date': '2026-12-31',
         }
@@ -68,9 +83,12 @@ class CertificationCreateTests(CertificationAPITestCase):
         self.assertEqual(response.status_code, 201, response.data)
         data = response.data['data']
         self.assertEqual(data['agent']['name'], 'Maria Alva')
-        self.assertEqual(data['policy_type']['name'], 'Medicare Advantage')
+        self.assertEqual(data['carrier']['name'], 'Humana')
+        self.assertEqual(data['line_of_business'], 'MAPD')
+        self.assertEqual(data['due_date'], '2027-09-15')
         self.assertEqual(data['start_date'], '2026-01-01')
         self.assertEqual(data['end_date'], '2026-12-31')
+        self.assertNotIn('policy_type', data)
         self.assertTrue(data['is_active'])
         self.assertEqual(Certification.objects.get(pk=data['id']).created_by, self.admin)
 
@@ -83,7 +101,9 @@ class CertificationCreateTests(CertificationAPITestCase):
             note.changes,
             [
                 {'field': 'agent', 'from': '', 'to': 'Maria Alva'},
-                {'field': 'policy_type', 'from': '', 'to': 'Medicare Advantage'},
+                {'field': 'carrier', 'from': '', 'to': 'Humana'},
+                {'field': 'line_of_business', 'from': '', 'to': 'MAPD'},
+                {'field': 'due_date', 'from': '', 'to': '2027-09-15'},
                 {'field': 'start_date', 'from': '', 'to': '2026-01-01'},
                 {'field': 'end_date', 'from': '', 'to': '2026-12-31'},
                 {'field': 'is_verified', 'from': '', 'to': 'no'},
@@ -91,178 +111,144 @@ class CertificationCreateTests(CertificationAPITestCase):
             ],
         )
 
-    def test_dates_are_optional(self):
-        body = {'agent': str(self.agent.pk), 'policy_type': str(self.policy_type.pk)}
-        response = self.client.post(self.create_url(), body, format='json')
-        self.assertEqual(response.status_code, 201, response.data)
-        self.assertIsNone(response.data['data']['start_date'])
-        self.assertIsNone(response.data['data']['end_date'])
-        # Blank dates are not listed on the note.
-        note = CertificationNote.objects.get(certification_id=response.data['data']['id'])
-        self.assertEqual([change['field'] for change in note.changes], ['agent', 'policy_type', 'is_verified', 'status'])
-
-    def test_blank_and_null_dates_are_accepted(self):
-        body = {**self.sample, 'start_date': None, 'end_date': None}
-        response = self.client.post(self.create_url(), body, format='json')
-        self.assertEqual(response.status_code, 201, response.data)
-
-    def test_end_before_start_is_400_under_end_date(self):
-        body = {**self.sample, 'start_date': '2026-06-01', 'end_date': '2026-05-31'}
-        response = self.client.post(self.create_url(), body, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('end_date', response.data['errors'])
-
-    def test_same_day_start_and_end_is_fine(self):
-        body = {**self.sample, 'start_date': '2026-06-01', 'end_date': '2026-06-01'}
-        response = self.client.post(self.create_url(), body, format='json')
-        self.assertEqual(response.status_code, 201, response.data)
-
-    def test_agent_and_policy_type_are_required(self):
+    def test_only_agent_is_required(self):
         response = self.client.post(self.create_url(), {}, format='json')
         self.assertEqual(response.status_code, 400)
-        self.assertIn('agent', response.data['errors'])
-        self.assertIn('policy_type', response.data['errors'])
+        self.assertEqual(list(response.data['errors']), ['agent'])
 
-    def test_unknown_agent_and_policy_type_are_400(self):
+        with mock.patch('apps.policies.utils.timezone.localdate', return_value=datetime.date(2026, 10, 1)):
+            response = self.client.post(self.create_url(), {'agent': str(self.agent.pk)}, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        data = response.data['data']
+        self.assertIsNone(data['carrier'])
+        self.assertEqual(data['line_of_business'], '')
+        self.assertIsNone(data['start_date'])
+        # The due date defaults to the next deadline.
+        self.assertEqual(data['due_date'], '2027-09-15')
+
+    def test_dates_are_not_checked(self):
+        body = {**self.sample, 'start_date': '2026-06-01', 'end_date': '2026-05-31'}
+        response = self.client.post(self.create_url(), body, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+
+    def test_the_same_certification_can_be_added_twice(self):
+        self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 201)
+        self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 201)
+        self.assertEqual(Certification.objects.filter(agent=self.agent).count(), 2)
+
+    def test_any_line_and_carrier_go_together(self):
+        # The line need not be one the carrier writes.
+        response = self.client.post(self.create_url(), {**self.sample, 'line_of_business': 'Life'}, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+
+    def test_unknown_line_agent_or_carrier_is_400(self):
         unknown = '00000000-0000-0000-0000-000000000000'
-        response = self.client.post(self.create_url(), {**self.sample, 'agent': unknown}, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('agent', response.data['errors'])
-        response = self.client.post(self.create_url(), {**self.sample, 'policy_type': unknown}, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('policy_type', response.data['errors'])
-
-    def test_duplicate_pair_is_400_under_policy_type(self):
-        make_certification(self.agent, self.policy_type)
-        response = self.client.post(self.create_url(), self.sample, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(
-            response.data['errors'], {'policy_type': ['Maria Alva is already certified for Medicare Advantage.']}
-        )
-
-    def test_deleted_pair_can_be_added_again(self):
-        make_certification(self.agent, self.policy_type).delete()
-        response = self.client.post(self.create_url(), self.sample, format='json')
-        self.assertEqual(response.status_code, 201, response.data)
-
-    def test_other_agent_same_type_is_fine(self):
-        make_certification(make_agent(name='Jim Carter', npn='2222'), self.policy_type)
-        response = self.client.post(self.create_url(), self.sample, format='json')
-        self.assertEqual(response.status_code, 201, response.data)
+        for field, value in (('line_of_business', 'Dental'), ('agent', unknown), ('carrier', unknown)):
+            response = self.client.post(self.create_url(), {**self.sample, field: value}, format='json')
+            self.assertEqual(response.status_code, 400, field)
+            self.assertIn(field, response.data['errors'])
 
 
 class CertificationListTests(CertificationAPITestCase):
-    def test_lists_by_policy_type_then_agent_with_filters(self):
+    def test_lists_by_agent_then_due_date_with_filters(self):
         jim = make_agent(name='Jim Carter', npn='2222')
-        dental = make_policy_type(name='Dental')
-        make_certification(self.agent, self.policy_type)
-        make_certification(jim, self.policy_type)
-        make_certification(jim, dental)
+        aetna = make_carrier(name='Aetna', lines=['MAPD', 'Life'])
+        make_certification(self.agent, self.humana, 'MAPD', due_date='2027-09-15')
+        make_certification(jim, self.humana, 'MAPD', due_date='2027-09-15')
+        make_certification(jim, aetna, 'Life', due_date='2026-09-15')
 
         response = self.client.get(self.list_url())
         self.assertEqual(response.status_code, 200)
-        rows = [(c['policy_type']['name'], c['agent']['name']) for c in response.data['data']]
+        rows = [(c['agent']['name'], c['carrier']['name'], c['line_of_business']) for c in response.data['data']]
         self.assertEqual(
             rows,
-            [('Dental', 'Jim Carter'), ('Medicare Advantage', 'Jim Carter'), ('Medicare Advantage', 'Maria Alva')],
+            [('Jim Carter', 'Aetna', 'Life'), ('Jim Carter', 'Humana', 'MAPD'), ('Maria Alva', 'Humana', 'MAPD')],
         )
         self.assertEqual(response.data['meta']['total_items'], 3)
 
         response = self.client.get(self.list_url(), {'agent': str(jim.pk)})
-        self.assertEqual([c['policy_type']['name'] for c in response.data['data']], ['Dental', 'Medicare Advantage'])
-
-        response = self.client.get(self.list_url(), {'policy_type': str(dental.pk)})
-        self.assertEqual([c['agent']['name'] for c in response.data['data']], ['Jim Carter'])
+        self.assertEqual(len(response.data['data']), 2)
+        response = self.client.get(self.list_url(), {'carrier': str(self.humana.pk)})
+        self.assertEqual([c['agent']['name'] for c in response.data['data']], ['Jim Carter', 'Maria Alva'])
+        response = self.client.get(self.list_url(), {'line_of_business': 'Life'})
+        self.assertEqual([c['carrier']['name'] for c in response.data['data']], ['Aetna'])
 
     def test_bad_agent_filter_is_400(self):
         response = self.client.get(self.list_url(), {'agent': 'not-a-uuid'})
         self.assertEqual(response.status_code, 400)
 
     def test_hides_deleted_certifications(self):
-        make_certification(self.agent, self.policy_type).delete()
+        make_certification(self.agent).delete()
         response = self.client.get(self.list_url())
         self.assertEqual(response.data['data'], [])
 
 
 class CertificationDetailTests(CertificationAPITestCase):
     def test_get(self):
-        certification = make_certification(self.agent, self.policy_type)
+        certification = make_certification(self.agent, self.humana, 'MAPD')
         response = self.client.get(self.detail_url(certification))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['data']['agent']['id'], str(self.agent.pk))
+        self.assertEqual(response.data['data']['carrier']['id'], str(self.humana.pk))
 
     def test_patch_updates_fields_and_records_note(self):
-        certification = make_certification(self.agent, self.policy_type, start_date='2026-01-01')
-        dental = make_policy_type(name='Dental')
+        certification = make_certification(self.agent, self.humana, 'MAPD', start_date='2026-01-01')
+        aetna = make_carrier(name='Aetna', lines=['Life'])
         response = self.client.patch(
             self.detail_url(certification),
-            {'policy_type': str(dental.pk), 'start_date': '2026-02-01', 'end_date': '2027-01-31', 'is_active': False},
+            {
+                'carrier': str(aetna.pk),
+                'line_of_business': 'Life',
+                'due_date': '2027-09-15',
+                'start_date': '2026-02-01',
+                'is_active': False,
+            },
             format='json',
         )
         self.assertEqual(response.status_code, 200, response.data)
         data = response.data['data']
-        self.assertEqual(data['policy_type']['name'], 'Dental')
-        self.assertEqual(data['start_date'], '2026-02-01')
+        self.assertEqual(data['carrier']['name'], 'Aetna')
+        self.assertEqual(data['line_of_business'], 'Life')
         self.assertFalse(data['is_active'])
         note = certification.notes.get()
         self.assertEqual(note.kind, 'edited')
         self.assertEqual(
             note.changes,
             [
-                {'field': 'policy_type', 'from': 'Medicare Advantage', 'to': 'Dental'},
+                {'field': 'carrier', 'from': 'Humana', 'to': 'Aetna'},
+                {'field': 'line_of_business', 'from': 'MAPD', 'to': 'Life'},
+                {'field': 'due_date', 'from': '', 'to': '2027-09-15'},
                 {'field': 'start_date', 'from': '2026-01-01', 'to': '2026-02-01'},
-                {'field': 'end_date', 'from': '', 'to': '2027-01-31'},
                 {'field': 'status', 'from': 'active', 'to': 'inactive'},
             ],
         )
 
-    def test_patch_can_clear_a_date(self):
-        certification = make_certification(self.agent, self.policy_type, start_date='2026-01-01', end_date='2026-12-31')
-        response = self.client.patch(self.detail_url(certification), {'end_date': None}, format='json')
+    def test_patch_can_clear_carrier_line_and_dates(self):
+        certification = make_certification(self.agent, self.humana, 'MAPD', end_date='2026-12-31')
+        response = self.client.patch(
+            self.detail_url(certification),
+            {'carrier': None, 'line_of_business': '', 'end_date': None},
+            format='json',
+        )
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertIsNone(response.data['data']['end_date'])
-        self.assertEqual(certification.notes.get().changes, [{'field': 'end_date', 'from': '2026-12-31', 'to': ''}])
+        data = response.data['data']
+        self.assertIsNone(data['carrier'])
+        self.assertEqual(data['line_of_business'], '')
+        self.assertIsNone(data['end_date'])
 
     def test_patch_with_no_change_writes_no_note(self):
-        certification = make_certification(self.agent, self.policy_type, start_date='2026-01-01')
+        certification = make_certification(self.agent, start_date='2026-01-01')
         response = self.client.patch(self.detail_url(certification), {'start_date': '2026-01-01'}, format='json')
         self.assertEqual(response.status_code, 200, response.data)
         self.assertFalse(certification.notes.exists())
 
-    def test_patch_checks_dates_against_stored_ones(self):
-        certification = make_certification(self.agent, self.policy_type, start_date='2026-06-01')
+    def test_patch_dates_are_not_checked(self):
+        certification = make_certification(self.agent, start_date='2026-06-01')
         response = self.client.patch(self.detail_url(certification), {'end_date': '2026-05-01'}, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('end_date', response.data['errors'])
-
-    def test_patch_duplicate_reported_under_the_side_that_was_sent(self):
-        jim = make_agent(name='Jim Carter', npn='2222')
-        dental = make_policy_type(name='Dental')
-        make_certification(self.agent, self.policy_type)  # Maria / MA
-        make_certification(jim, dental)  # Jim / Dental
-        certification = make_certification(self.agent, dental)  # Maria / Dental
-
-        # Changing the policy type to MA collides with Maria / MA: under policy_type.
-        response = self.client.patch(self.detail_url(certification), {'policy_type': str(self.policy_type.pk)}, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(list(response.data['errors']), ['policy_type'])
-
-        # Changing the agent to Jim collides with Jim / Dental: under agent.
-        response = self.client.patch(self.detail_url(certification), {'agent': str(jim.pk)}, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(list(response.data['errors']), ['agent'])
-
-    def test_patch_keeps_own_pair(self):
-        certification = make_certification(self.agent, self.policy_type)
-        response = self.client.patch(
-            self.detail_url(certification),
-            {'agent': str(self.agent.pk), 'policy_type': str(self.policy_type.pk)},
-            format='json',
-        )
         self.assertEqual(response.status_code, 200, response.data)
 
     def test_delete_is_soft(self):
-        certification = make_certification(self.agent, self.policy_type)
+        certification = make_certification(self.agent)
         response = self.client.delete(self.detail_url(certification))
         self.assertEqual(response.status_code, 200)
         self.assertFalse(Certification.objects.filter(pk=certification.pk).exists())
@@ -270,7 +256,7 @@ class CertificationDetailTests(CertificationAPITestCase):
         self.assertEqual(self.client.get(self.detail_url(certification)).status_code, 404)
 
     def test_notes_newest_first(self):
-        certification = make_certification(self.agent, self.policy_type)
+        certification = make_certification(self.agent)
         self.client.patch(self.detail_url(certification), {'start_date': '2026-01-01'}, format='json')
         self.client.patch(self.detail_url(certification), {'start_date': '2026-02-01'}, format='json')
         response = self.client.get(self.notes_url(certification))
@@ -295,20 +281,17 @@ class CertificationPermissionTests(CertificationAPITestCase):
         self.assertEqual(self.client.get(self.list_url()).status_code, 403)
 
     def test_view_only_role_can_list_but_not_create(self):
-        self.staff.role = make_role('certifications', can_view=True)
-        self.staff.save()
+        self.staff.roles.set([make_role('certifications', can_view=True)])
         self.assertEqual(self.client.get(self.list_url()).status_code, 200)
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 403)
 
     def test_create_role_can_create(self):
-        self.staff.role = make_role('certifications', can_view=True, can_create=True)
-        self.staff.save()
+        self.staff.roles.set([make_role('certifications', can_view=True, can_create=True)])
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 201)
 
     def test_agents_or_policy_types_role_alone_is_not_enough(self):
         for module in ('agents', 'policy_types'):
-            self.staff.role = make_role(module, can_view=True, can_create=True)
-            self.staff.save()
+            self.staff.roles.set([make_role(module, can_view=True, can_create=True)])
             self.assertEqual(self.client.get(self.list_url()).status_code, 403, module)
 
     def test_module_is_listed_for_roles(self):
@@ -320,112 +303,6 @@ class CertificationPermissionTests(CertificationAPITestCase):
 
 def make_pdf(name='certificate.pdf', body=b'%PDF-1.7\n%fake\n'):
     return SimpleUploadedFile(name, body, content_type='application/pdf')
-
-
-class CertificationCarrierTests(CertificationAPITestCase):
-    def setUp(self):
-        super().setUp()
-        agency = Agency.objects.create(name='Cedar Grove')
-        self.humana = Carrier.objects.create(name='Humana', lines_of_business=['MAPD'])
-        self.aetna = Carrier.objects.create(name='Aetna', lines_of_business=['MAPD'])
-        self.cigna = Carrier.objects.create(name='Cigna', lines_of_business=['MAPD'])
-        self.wellcare = Carrier.objects.create(name='Wellcare', lines_of_business=['MAPD'])
-        for carrier in (self.humana, self.aetna, self.cigna):
-            AgencyCarrierContract.objects.create(agency=agency, carrier=carrier)
-        # MAPD needs certifying for Humana, Aetna and Wellcare; Cigna is contracted but not required.
-        self.mapd = make_policy_type(name='MAPD', certification_scope='per_carrier')
-        self.mapd.certification_carriers.set([self.humana, self.aetna, self.wellcare])
-        self.policy_type.certification_scope = 'single'
-        self.policy_type.save()
-
-    def mapd_body(self, *carriers, **extra):
-        return {
-            **self.sample,
-            'policy_type': str(self.mapd.pk),
-            'carriers': [str(carrier.pk) for carrier in carriers],
-            **extra,
-        }
-
-    def test_one_certification_covers_two_carriers(self):
-        response = self.client.post(self.create_url(), self.mapd_body(self.humana, self.aetna), format='json')
-        self.assertEqual(response.status_code, 201, response.data)
-        data = response.data['data']
-        self.assertEqual([carrier['name'] for carrier in data['carriers']], ['Aetna', 'Humana'])
-        self.assertEqual(data['start_date'], '2026-01-01')
-        self.assertEqual(Certification.objects.filter(agent=self.agent, policy_type=self.mapd).count(), 1)
-        note = CertificationNote.objects.get(certification_id=data['id'])
-        self.assertEqual(note.changes[2], {'field': 'carriers', 'from': '', 'to': 'Aetna, Humana'})
-        # The list shows it both for the agent and for the policy type.
-        for query in ({'agent': str(self.agent.pk)}, {'policy_type': str(self.mapd.pk)}):
-            listed = self.client.get(self.list_url(), query).data['data']
-            self.assertEqual([len(row['carriers']) for row in listed if row['id'] == data['id']], [2])
-
-    def test_second_mapd_row_for_the_agent_is_400(self):
-        self.client.post(self.create_url(), self.mapd_body(self.humana), format='json')
-        response = self.client.post(self.create_url(), self.mapd_body(self.aetna), format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('policy_type', response.data['errors'])
-
-    def test_per_carrier_needs_a_carrier(self):
-        response = self.client.post(self.create_url(), self.mapd_body(), format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('carriers', response.data['errors'])
-
-    def test_carrier_not_required_on_the_type_is_400(self):
-        response = self.client.post(self.create_url(), self.mapd_body(self.humana, self.cigna), format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data['errors']['carriers'], ['Cigna does not need a MAPD certification.'])
-
-    def test_uncontracted_carrier_is_400(self):
-        response = self.client.post(self.create_url(), self.mapd_body(self.wellcare), format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data['errors']['carriers'], ['Wellcare has no agency contract.'])
-
-    def test_carriers_on_a_single_type_are_400(self):
-        body = {**self.sample, 'carriers': [str(self.humana.pk)]}
-        response = self.client.post(self.create_url(), body, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('carriers', response.data['errors'])
-
-    def test_single_type_has_no_carriers(self):
-        response = self.client.post(self.create_url(), self.sample, format='json')
-        self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(response.data['data']['carriers'], [])
-
-    def test_patch_changes_carriers_and_dates_and_notes_them(self):
-        certification = make_certification(self.agent, self.mapd)
-        certification.carriers.set([self.humana])
-        body = {'carriers': [str(self.humana.pk), str(self.aetna.pk)], 'end_date': '2027-06-30'}
-        response = self.client.patch(self.detail_url(certification), body, format='json')
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(len(response.data['data']['carriers']), 2)
-        self.assertEqual(
-            certification.notes.get().changes,
-            [
-                {'field': 'carriers', 'from': 'Humana', 'to': 'Aetna, Humana'},
-                {'field': 'end_date', 'from': '', 'to': '2027-06-30'},
-            ],
-        )
-
-    def test_patch_without_carriers_keeps_them(self):
-        certification = make_certification(self.agent, self.mapd)
-        certification.carriers.set([self.humana])
-        response = self.client.patch(self.detail_url(certification), {'is_verified': True}, format='json')
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(len(response.data['data']['carriers']), 1)
-
-    def test_patch_to_a_single_type_clears_carriers(self):
-        certification = make_certification(self.agent, self.mapd)
-        certification.carriers.set([self.humana])
-        response = self.client.patch(self.detail_url(certification), {'policy_type': str(self.policy_type.pk)}, format='json')
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data['data']['carriers'], [])
-
-    def test_patch_to_per_carrier_type_needs_carriers(self):
-        certification = make_certification(self.agent, self.policy_type)
-        response = self.client.patch(self.detail_url(certification), {'policy_type': str(self.mapd.pk)}, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('carriers', response.data['errors'])
 
 
 class CertificationFileTests(CertificationAPITestCase):
@@ -460,7 +337,10 @@ class CertificationFileTests(CertificationAPITestCase):
         self.assertTrue(response.data['data']['is_verified'])
         certification = Certification.objects.get(pk=response.data['data']['id'])
         fields = [change['field'] for change in certification.notes.get().changes]
-        self.assertEqual(fields, ['agent', 'policy_type', 'start_date', 'end_date', 'is_verified', 'status', 'file'])
+        self.assertEqual(
+            fields,
+            ['agent', 'carrier', 'line_of_business', 'due_date', 'start_date', 'end_date', 'is_verified', 'status', 'file'],
+        )
         response = self.client.patch(self.detail_url(certification), {'is_verified': False}, format='json')
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(certification.notes.first().changes, [{'field': 'is_verified', 'from': 'yes', 'to': 'no'}])
@@ -525,17 +405,11 @@ class CertificationFileTests(CertificationAPITestCase):
         self.assertIsNone(response.data['data']['end_date'])
         self.assertTrue(response.data['data']['is_verified'])
 
-    def test_multipart_carries_carriers(self):
-        agency = Agency.objects.create(name='Cedar Grove')
-        humana = Carrier.objects.create(name='Humana', lines_of_business=['MAPD'])
-        aetna = Carrier.objects.create(name='Aetna', lines_of_business=['MAPD'])
-        for carrier in (humana, aetna):
-            AgencyCarrierContract.objects.create(agency=agency, carrier=carrier)
-        mapd = make_policy_type(name='MAPD', certification_scope='per_carrier')
-        mapd.certification_carriers.set([humana, aetna])
-        response = self.create_with_file(policy_type=str(mapd.pk), carriers=[str(humana.pk), str(aetna.pk)])
+    def test_multipart_carries_carrier_and_line(self):
+        response = self.create_with_file(line_of_business='Life')
         self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(len(response.data['data']['carriers']), 2)
+        self.assertEqual(response.data['data']['carrier']['name'], 'Humana')
+        self.assertEqual(response.data['data']['line_of_business'], 'Life')
         self.assertEqual(response.data['data']['file_name'], 'certificate.pdf')
 
     def test_download_needs_certifications_view(self):
@@ -543,7 +417,63 @@ class CertificationFileTests(CertificationAPITestCase):
         staff = User.objects.create_user(email='staff@example.com', password='Sup3r-secret!', full_name='Staff')
         self.client.force_authenticate(staff)
         self.assertEqual(self.client.get(self.file_url(certification)).status_code, 403)
-        staff.role = make_role('certifications', can_view=True)
-        staff.save()
+        staff.roles.set([make_role('certifications', can_view=True)])
         self.client.force_authenticate(User.objects.get(pk=staff.pk))
         self.assertEqual(self.client.get(self.file_url(certification)).status_code, 200)
+
+
+class ContractCertificationTests(CertificationAPITestCase):
+    DUE = datetime.date(2027, 9, 15)
+
+    def setUp(self):
+        super().setUp()
+        self.humana.lines_of_business = ['Medicare Supplement', 'MAPD']
+        self.humana.save()
+
+    def lines(self, **filters):
+        rows = Certification.objects.filter(agent=self.agent, carrier=self.humana, **filters)
+        return sorted(row.line_of_business for row in rows)
+
+    def test_adds_one_row_per_line_and_skips_covered_ones(self):
+        make_certification(self.agent, self.humana, 'MAPD', due_date=self.DUE)
+        touched = add_contract_certifications(self.agent, self.humana, due_date=self.DUE)
+        self.assertEqual([row.line_of_business for row in touched], ['Medicare Supplement'])
+        self.assertEqual(self.lines(), ['MAPD', 'Medicare Supplement'])
+        # Running again adds nothing.
+        self.assertEqual(add_contract_certifications(self.agent, self.humana, due_date=self.DUE), [])
+
+    def test_last_years_rows_do_not_count(self):
+        make_certification(self.agent, self.humana, 'MAPD', due_date=datetime.date(2026, 9, 15))
+        add_contract_certifications(self.agent, self.humana, due_date=self.DUE)
+        self.assertEqual(self.lines(due_date=self.DUE), ['MAPD', 'Medicare Supplement'])
+
+    def test_fills_in_a_row_with_the_carrier_but_no_line(self):
+        old = make_certification(self.agent, self.humana)
+        add_contract_certifications(self.agent, self.humana, due_date=self.DUE)
+        old.refresh_from_db()
+        self.assertEqual((old.line_of_business, old.due_date), ('Medicare Supplement', self.DUE))
+        self.assertEqual(old.notes.get().kind, 'edited')
+        self.assertEqual(self.lines(), ['MAPD', 'Medicare Supplement'])
+
+    def test_an_undated_row_with_a_line_counts_and_takes_the_date(self):
+        old = make_certification(self.agent, self.humana, 'MAPD')
+        touched = add_contract_certifications(self.agent, self.humana, due_date=self.DUE)
+        self.assertEqual(len(touched), 2)
+        old.refresh_from_db()
+        self.assertEqual(old.due_date, self.DUE)
+        self.assertEqual(self.lines(), ['MAPD', 'Medicare Supplement'])
+
+    def test_command_covers_every_contract_and_dates_the_rest(self):
+        from django.core.management import call_command
+
+        from apps.contracts.models import CarrierContract
+
+        CarrierContract.objects.create(agent=self.agent, carrier=self.humana)
+        loose = make_certification(make_agent(name='Jim Carter', npn='2222'))
+        call_command('add_contract_certifications', due='2027-09-15', stdout=io.StringIO())
+        self.assertEqual(self.lines(due_date=self.DUE), ['MAPD', 'Medicare Supplement'])
+        loose.refresh_from_db()
+        self.assertEqual(loose.due_date, self.DUE)
+        # A second run changes nothing.
+        call_command('add_contract_certifications', due='2027-09-15', stdout=io.StringIO())
+        self.assertEqual(Certification.objects.filter(agent=self.agent).count(), 2)

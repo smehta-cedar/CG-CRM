@@ -196,7 +196,29 @@ class ContractPermissionTests(ContractAPITestCase):
         self.assertEqual(self.client.get(self.list_url()).status_code, 403)
 
     def test_view_only_role_can_list_but_not_create(self):
-        self.staff.role = make_role(can_view=True)
-        self.staff.save()
+        self.staff.roles.set([make_role(can_view=True)])
         self.assertEqual(self.client.get(self.list_url()).status_code, 200)
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 403)
+
+
+class ContractCertificationTests(ContractAPITestCase):
+    def test_new_contract_adds_a_certification_per_carrier_line(self):
+        from apps.policies.models import Certification
+        from apps.policies.utils import certification_due_date
+
+        self.carrier.lines_of_business = ['Medicare Supplement', 'MAPD']
+        self.carrier.save()
+        response = self.client.post(self.create_url(), self.sample, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        rows = Certification.objects.filter(agent=self.agent, carrier=self.carrier).order_by('line_of_business')
+        self.assertEqual([row.line_of_business for row in rows], ['MAPD', 'Medicare Supplement'])
+        self.assertTrue(all(row.due_date == certification_due_date() for row in rows))
+        self.assertTrue(all(row.created_by == self.admin for row in rows))
+        self.assertEqual(rows[0].notes.get().kind, 'added')
+
+    def test_failed_contract_adds_no_certification(self):
+        from apps.policies.models import Certification
+
+        response = self.client.post(self.create_url(), {**self.sample, 'appointed_states': ['LA']}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Certification.objects.exists())

@@ -228,8 +228,9 @@ class AgencyPermissionTests(AgencyAPITestCase):
     def test_view_only_role_can_list_but_not_create(self):
         role = make_role(can_view=True)
         user = User.objects.create_user(
-            email='viewer@example.com', password='Sup3r-secret!', full_name='Viewer', role=role
+            email='viewer@example.com', password='Sup3r-secret!', full_name='Viewer'
         )
+        user.roles.add(role)
         self.client.force_authenticate(user)
         self.assertEqual(self.client.get(self.list_url()).status_code, 200)
         self.assertEqual(self.client.post(self.create_url(), {'name': 'X'}, format='json').status_code, 403)
@@ -238,8 +239,9 @@ class AgencyPermissionTests(AgencyAPITestCase):
         agency = make_agency()
         role = make_role(can_view=True, can_update=True)
         user = User.objects.create_user(
-            email='editor@example.com', password='Sup3r-secret!', full_name='Editor', role=role
+            email='editor@example.com', password='Sup3r-secret!', full_name='Editor'
         )
+        user.roles.add(role)
         self.client.force_authenticate(user)
         self.assertEqual(self.client.patch(self.detail_url(agency), {'phone': '1'}, format='json').status_code, 200)
         self.assertEqual(self.client.delete(self.detail_url(agency)).status_code, 403)

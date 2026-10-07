@@ -20,8 +20,9 @@ from apps.accounts.validators import (
     ensure_can_manage,
     ensure_email_free,
     ensure_not_self,
-    ensure_own_role_unchanged,
     ensure_password_strong,
+    ensure_roles_unchanged,
+    ensure_superuser,
 )
 from apps.base.api.pagination import paginate
 from apps.base.api.permissions import module_permission
@@ -43,7 +44,8 @@ CAN_UPDATE_USERS = module_permission('users', {'POST': 'update'})
 
 # The rules (apps.accounts.validators) enforced in the views below:
 #   - only a superuser can change a superuser account
-#   - nobody can block or delete their own account, or change their own role
+#   - only a superuser can give or take away roles, or set someone's password
+#   - nobody can block or delete their own account
 # Blocking, deleting and password changes also sign the user out everywhere.
 
 
@@ -57,7 +59,7 @@ def user_list(request):
     filters = query.validated_data
 
     # Staff accounts only. An agent's sign-in (work email + code) is not a user row here.
-    users = User.objects.filter(agent__isnull=True).select_related('role', 'designation')
+    users = User.objects.filter(agent__isnull=True).select_related('designation').prefetch_related('roles')
 
     search = filters.get('search')
     if search:
@@ -84,6 +86,7 @@ def user_create(request):
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
 
+    ensure_roles_unchanged(request.user, None, data.get('roles', []))
     email = normalize_email(data['email'])
     ensure_email_free(email)
     # The unsaved User lets the check reject passwords too similar to the email or name.
@@ -95,11 +98,11 @@ def user_create(request):
             password=data['password'],
             full_name=data['full_name'],
             phone=data.get('phone', ''),
-            role=data.get('role'),
             designation=data.get('designation'),
             created_by=request.user,
             updated_by=request.user,
         )
+        user.roles.set(data.get('roles', []))
         # The note lists every filled field; the password only as "set".
         record_note(user, request.user, UserNote.KIND_ADDED, diff_snapshots({}, snapshot(user)))
     return APIResponse(UserSerializer(user).data, 'User created successfully.', status=status.HTTP_201_CREATED)
@@ -129,8 +132,8 @@ def user_detail(request, pk):
             if fields['email'] != user.email:
                 ensure_email_free(fields['email'])
 
-        if 'role' in fields:
-            ensure_own_role_unchanged(request.user, user, fields['role'])
+        if 'roles' in fields:
+            ensure_roles_unchanged(request.user, user, fields['roles'])
 
         before = snapshot(user)
         with transaction.atomic():
@@ -180,7 +183,8 @@ def user_unblock(request, pk):
 @permission_classes([IsAuthenticated, CAN_UPDATE_USERS])
 def user_set_password(request, pk):
     user = get_user_or_404(pk)
-    ensure_can_manage(request.user, user)
+    # Setting a password is signing in as that user, so it needs everything they have.
+    ensure_superuser(request.user, "Only a superuser can set another user's password.")
     serializer = SetPasswordSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     new_password = serializer.validated_data['new_password']

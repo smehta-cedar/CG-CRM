@@ -50,7 +50,6 @@ class Command(BaseCommand):
                 role = roles.get(row.get('role', 'staff'), roles['staff'])
                 fields = {
                     'full_name': ' '.join(row['name'].split()),
-                    'role': role,
                     'is_active': row.get('status', 'active') != 'inactive',
                 }
                 user = User.all_objects.filter(email=email).first()
@@ -66,6 +65,8 @@ class Command(BaseCommand):
                         user.set_password(row['password'])
                     user.save()
                     updated += 1
+                # The file gives one role; it replaces whatever roles the user had.
+                user.roles.set([role])
 
         self.stdout.write(self.style.SUCCESS(f'Users: {created} created, {updated} updated; roles Admin and Staff in place.'))
 

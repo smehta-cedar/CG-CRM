@@ -3,8 +3,7 @@ from rest_framework.exceptions import ValidationError
 from apps.agency.models import State
 from apps.agents.models import Agent
 from apps.carriers.models import Carrier
-from apps.contracts.models import AgencyCarrierContract
-from apps.policies.models import CarrierPolicy, Certification, PolicyType
+from apps.policies.models import CarrierPolicy, PolicyType
 
 # Every check the policies views run. Each one returns nothing when the check
 # passes and raises ValidationError (400, field errors under "errors").
@@ -20,32 +19,6 @@ def ensure_name_free(name, exclude=None):
         policy_types = policy_types.exclude(pk=exclude.pk)
     if policy_types.filter(name__iexact=name).exists():
         raise ValidationError({'name': ['A policy type with this name already exists.']})
-
-
-def _names(carriers):
-    return ', '.join(sorted((carrier.name for carrier in carriers), key=str.lower))
-
-
-def resolve_certification_carriers(pks, scope):
-    """The Carrier rows for a policy type's certification carriers. Only a
-    per_carrier scope has them, then at least one, each with a live agency
-    contract; anything else is a 400 under "certification_carriers"."""
-    wanted = set(pks)
-    if scope != PolicyType.SCOPE_PER_CARRIER:
-        if wanted:
-            raise ValidationError({'certification_carriers': ['Only a per-carrier policy type has carriers.']})
-        return []
-    if not wanted:
-        raise ValidationError({'certification_carriers': ['Choose at least one carrier.']})
-    carriers = list(Carrier.objects.filter(pk__in=wanted))
-    if len(carriers) != len(wanted):
-        raise ValidationError({'certification_carriers': ['Unknown carrier.']})
-    contracted = set(AgencyCarrierContract.objects.filter(carrier__in=carriers).values_list('carrier_id', flat=True))
-    uncontracted = [carrier for carrier in carriers if carrier.pk not in contracted]
-    if uncontracted:
-        verb = 'has' if len(uncontracted) == 1 else 'have'
-        raise ValidationError({'certification_carriers': [f'{_names(uncontracted)} {verb} no agency contract.']})
-    return carriers
 
 
 # --- carrier policies -------------------------------------------------------
@@ -100,53 +73,6 @@ def resolve_agent(pk):
     if agent is None:
         raise ValidationError({'agent': ['Unknown agent.']})
     return agent
-
-
-def ensure_pair_free(agent, policy_type, field, exclude=None):
-    """One live certification per agent and policy type. `field` is where the
-    error sits: "policy_type" when the agent was already chosen, "agent" when
-    the policy type was."""
-    certifications = Certification.objects.filter(agent=agent, policy_type=policy_type)
-    if exclude is not None:
-        certifications = certifications.exclude(pk=exclude.pk)
-    if certifications.exists():
-        raise ValidationError({field: [f'{agent.name} is already certified for {policy_type.name}.']})
-
-
-def resolve_covered_carriers(pks, policy_type):
-    """The Carrier rows a certification covers. Only a per_carrier policy
-    type takes them, then at least one, each among the type's certification
-    carriers and with a live agency contract; anything else is a 400 under
-    "carriers"."""
-    wanted = set(pks)
-    if policy_type.certification_scope != PolicyType.SCOPE_PER_CARRIER:
-        if wanted:
-            raise ValidationError({'carriers': [f'{policy_type.name} is not certified per carrier.']})
-        return []
-    if not wanted:
-        raise ValidationError({'carriers': ['Choose at least one carrier.']})
-    carriers = list(Carrier.objects.filter(pk__in=wanted))
-    if len(carriers) != len(wanted):
-        raise ValidationError({'carriers': ['Unknown carrier.']})
-    required = {carrier.pk for carrier in policy_type.certification_carriers.all()}
-    not_required = [carrier for carrier in carriers if carrier.pk not in required]
-    if not_required:
-        verb = 'does' if len(not_required) == 1 else 'do'
-        raise ValidationError(
-            {'carriers': [f'{_names(not_required)} {verb} not need a {policy_type.name} certification.']}
-        )
-    contracted = set(AgencyCarrierContract.objects.filter(carrier__in=carriers).values_list('carrier_id', flat=True))
-    uncontracted = [carrier for carrier in carriers if carrier.pk not in contracted]
-    if uncontracted:
-        verb = 'has' if len(uncontracted) == 1 else 'have'
-        raise ValidationError({'carriers': [f'{_names(uncontracted)} {verb} no agency contract.']})
-    return carriers
-
-
-def ensure_dates_in_order(start_date, end_date):
-    """When both dates are set, the end is on or after the start."""
-    if start_date and end_date and end_date < start_date:
-        raise ValidationError({'end_date': ['The end date must be on or after the start date.']})
 
 
 # A certification's PDF: the one file type the API takes, up to this size.

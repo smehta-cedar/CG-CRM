@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
+from apps.carriers.models import LINES_OF_BUSINESS
 from apps.passwords.apis.passwords.serializers import AgentSummarySerializer, CarrierSummarySerializer
-from apps.policies.apis.carrier_policies.serializers import PolicyTypeSummarySerializer
 from apps.policies.models import Certification, CertificationNote
 
 
@@ -9,10 +9,7 @@ class CertificationSerializer(serializers.ModelSerializer):
     """How a certification appears in every response."""
 
     agent = AgentSummarySerializer(read_only=True)
-    policy_type = PolicyTypeSummarySerializer(read_only=True)
-    carriers = serializers.SerializerMethodField(
-        help_text='Carriers this certification covers, in name order. Empty unless the policy type is per_carrier.'
-    )
+    carrier = CarrierSummarySerializer(read_only=True, allow_null=True)
     file_name = serializers.SerializerMethodField(
         help_text='The uploaded PDF name, or null when there is none. Download it from /certifications/{id}/file/.'
     )
@@ -22,8 +19,9 @@ class CertificationSerializer(serializers.ModelSerializer):
         fields = (
             'id',
             'agent',
-            'policy_type',
-            'carriers',
+            'carrier',
+            'line_of_business',
+            'due_date',
             'start_date',
             'end_date',
             'is_verified',
@@ -33,10 +31,6 @@ class CertificationSerializer(serializers.ModelSerializer):
             'updated_at',
         )
         read_only_fields = fields
-
-    def get_carriers(self, certification) -> list[dict]:
-        carriers = sorted(certification.carriers.all(), key=lambda carrier: carrier.name.lower())
-        return CarrierSummarySerializer(carriers, many=True).data
 
     def get_file_name(self, certification) -> str | None:
         return certification.file_name if certification.file else None
@@ -76,12 +70,16 @@ def _date_field():
     return serializers.DateField(required=False, allow_null=True)
 
 
-def _carriers_field():
-    return serializers.ListField(
-        child=serializers.UUIDField(),
+def _carrier_field():
+    return serializers.UUIDField(required=False, allow_null=True)
+
+
+def _line_field():
+    return serializers.ChoiceField(
+        choices=LINES_OF_BUSINESS,
         required=False,
-        help_text="Carriers covered. Per_carrier policy types only, then at least one of the type's "
-        'certification carriers with a live agency contract.',
+        allow_blank=True,
+        help_text="The certification's sub type: one of the carrier's lines of business.",
     )
 
 
@@ -94,8 +92,11 @@ def _file_field():
 
 class CertificationCreateSerializer(serializers.Serializer):
     agent = serializers.UUIDField()
-    policy_type = serializers.UUIDField(help_text='A row from the policy type catalog.')
-    carriers = _carriers_field()
+    carrier = _carrier_field()
+    line_of_business = _line_field()
+    due_date = serializers.DateField(
+        required=False, allow_null=True, help_text='Defaults to the next yearly deadline.'
+    )
     start_date = _date_field()
     end_date = _date_field()
     is_verified = serializers.BooleanField(required=False)
@@ -104,12 +105,12 @@ class CertificationCreateSerializer(serializers.Serializer):
 
 
 class CertificationUpdateSerializer(serializers.Serializer):
-    """Send only the fields that change. A duplicate pair is reported under
-    whichever of agent / policy_type was sent (policy_type when both were)."""
+    """Send only the fields that change."""
 
     agent = serializers.UUIDField(required=False)
-    policy_type = serializers.UUIDField(required=False)
-    carriers = _carriers_field()
+    carrier = _carrier_field()
+    line_of_business = _line_field()
+    due_date = _date_field()
     start_date = _date_field()
     end_date = _date_field()
     is_verified = serializers.BooleanField(required=False)
@@ -119,4 +120,7 @@ class CertificationUpdateSerializer(serializers.Serializer):
 
 class CertificationListQuerySerializer(serializers.Serializer):
     agent = serializers.UUIDField(required=False, help_text="Only this agent's certifications.")
-    policy_type = serializers.UUIDField(required=False, help_text='Only certifications for this policy type.')
+    carrier = serializers.UUIDField(required=False, help_text="Only this carrier's certifications.")
+    line_of_business = serializers.ChoiceField(
+        choices=LINES_OF_BUSINESS, required=False, help_text='Only certifications for this line of business.'
+    )

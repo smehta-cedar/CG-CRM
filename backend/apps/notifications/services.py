@@ -6,9 +6,10 @@ from .models import Notification
 
 
 def admin_users():
-    """Active superusers, and active users whose role is an admin one (its
-    name has "admin" in it, e.g. "Admin" or "Super Admin")."""
-    admin_role = Q(role__name__icontains='admin', role__is_active=True, role__deleted_at__isnull=True)
+    """Active superusers, and active users holding any admin role (its name
+    has "admin" in it, e.g. "Admin" or "Super Admin")."""
+    # One filter() call, so all three conditions apply to the same role.
+    admin_role = Q(roles__name__icontains='admin', roles__is_active=True, roles__deleted_at__isnull=True)
     return User.objects.filter(is_active=True).filter(Q(is_superuser=True) | admin_role).distinct()
 
 

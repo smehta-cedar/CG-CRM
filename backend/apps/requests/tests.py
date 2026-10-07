@@ -134,8 +134,7 @@ class RequestPermissionTests(RequestAPITestCase):
         self.assertEqual(self.client.get(self.url('list')).status_code, 403)
 
     def test_create_role_can_file_but_not_decide(self):
-        self.shop.role = make_role(can_view=True, can_create=True)
-        self.shop.save()
+        self.shop.roles.set([make_role(can_view=True, can_create=True)])
         response = self.client.post(self.url('merch'), {**self.order, 'quantity': 1}, format='json')
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(

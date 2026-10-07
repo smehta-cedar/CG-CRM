@@ -275,17 +275,14 @@ class CarrierPolicyPermissionTests(CarrierPolicyAPITestCase):
         self.assertEqual(self.client.get(self.list_url()).status_code, 403)
 
     def test_carriers_view_only_role_can_list_but_not_create(self):
-        self.staff.role = make_role('carriers', can_view=True)
-        self.staff.save()
+        self.staff.roles.set([make_role('carriers', can_view=True)])
         self.assertEqual(self.client.get(self.list_url()).status_code, 200)
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 403)
 
     def test_carriers_create_role_can_create(self):
-        self.staff.role = make_role('carriers', can_view=True, can_create=True)
-        self.staff.save()
+        self.staff.roles.set([make_role('carriers', can_view=True, can_create=True)])
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 201)
 
     def test_policy_types_role_alone_is_not_enough(self):
-        self.staff.role = make_role('policy_types', can_view=True, can_create=True)
-        self.staff.save()
+        self.staff.roles.set([make_role('policy_types', can_view=True, can_create=True)])
         self.assertEqual(self.client.get(self.list_url()).status_code, 403)

@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from apps.accounts.models import Designation, Role, User, UserNote
+from apps.accounts.models.roles import ACTIONS, PERMISSION_LABELS
 
 
 class RoleSummarySerializer(serializers.ModelSerializer):
@@ -18,7 +19,7 @@ class DesignationSummarySerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     """How a user appears in every response."""
 
-    role = RoleSummarySerializer(read_only=True)
+    roles = RoleSummarySerializer(many=True, read_only=True)
     designation = DesignationSummarySerializer(read_only=True)
     agent_id = serializers.UUIDField(read_only=True, allow_null=True)
 
@@ -29,7 +30,7 @@ class UserSerializer(serializers.ModelSerializer):
             'email',
             'full_name',
             'phone',
-            'role',
+            'roles',
             'designation',
             'agent_id',
             'is_active',
@@ -39,6 +40,30 @@ class UserSerializer(serializers.ModelSerializer):
             'updated_at',
         )
         read_only_fields = fields
+
+
+class MeSerializer(UserSerializer):
+    """The signed-in user, plus what their roles let them do (GET /auth/me/).
+
+    `permissions` maps each module code they can do anything on to its
+    action flags: {"agents": {"view": true, "create": false, ...}, ...}.
+    Built from User.has_permission, so a superuser has every module, and an
+    agent's account or a blocked user only what that check allows.
+    """
+
+    permissions = serializers.SerializerMethodField()
+
+    class Meta(UserSerializer.Meta):
+        fields = (*UserSerializer.Meta.fields, 'permissions')
+        read_only_fields = fields
+
+    def get_permissions(self, user) -> dict[str, dict[str, bool]]:
+        permissions = {}
+        for module in PERMISSION_LABELS:
+            flags = {action: user.has_permission(module, action) for action in ACTIONS}
+            if any(flags.values()):
+                permissions[module] = flags
+        return permissions
 
 
 class UserChangeSerializer(serializers.Serializer):
@@ -74,13 +99,14 @@ class UserNoteSerializer(serializers.ModelSerializer):
 
 # Only live, active roles and designations can be assigned. The querysets are
 # lazy and re-run on every request.
-def _role_id_field():
+def _role_ids_field():
+    """The full list of roles; [] for none. Sent ids replace the user's roles."""
     return serializers.PrimaryKeyRelatedField(
-        source='role',
+        source='roles',
         queryset=Role.objects.filter(is_active=True),
         pk_field=serializers.UUIDField(),
+        many=True,
         required=False,
-        allow_null=True,
     )
 
 
@@ -103,7 +129,7 @@ class UserCreateSerializer(serializers.Serializer):
     full_name = serializers.CharField(max_length=255)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     password = _password_field()
-    role_id = _role_id_field()
+    role_ids = _role_ids_field()
     designation_id = _designation_id_field()
 
 
@@ -113,7 +139,7 @@ class UserUpdateSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False)
     full_name = serializers.CharField(max_length=255, required=False)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
-    role_id = _role_id_field()
+    role_ids = _role_ids_field()
     designation_id = _designation_id_field()
 
 
@@ -131,9 +157,9 @@ class UserListQuerySerializer(serializers.Serializer):
     search = serializers.CharField(
         required=False,
         allow_blank=True,
-        help_text='Matches email, full name, phone, role or designation.',
+        help_text='Matches email, full name, phone, any role or designation.',
     )
-    role_id = serializers.UUIDField(required=False)
+    role_id = serializers.UUIDField(required=False, help_text='Users holding this role, among others.')
     designation_id = serializers.UUIDField(required=False)
     is_active = serializers.BooleanField(
         required=False,
