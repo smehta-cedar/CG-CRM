@@ -11,6 +11,7 @@ NOTE_FIELDS = (
     'name',
     'aliases',
     'lines_of_business',
+    'certification_lines',
     'link',
     'available_states',
     'license_numbers',
@@ -127,6 +128,7 @@ def snapshot(carrier):
         'name': carrier.name,
         'aliases': ', '.join(carrier.aliases),
         'lines_of_business': ', '.join(carrier.lines_of_business),
+        'certification_lines': ', '.join(carrier.certification_lines),
         'link': carrier.link,
         'available_states': ', '.join(carrier.state_codes),
         'license_numbers': ', '.join(

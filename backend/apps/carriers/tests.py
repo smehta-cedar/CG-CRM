@@ -102,6 +102,28 @@ class CarrierCreateTests(CarrierAPITestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data['data']['lines_of_business'], ['MAPD', 'Life', 'Annuities'])
 
+    def test_certification_lines_keep_catalog_order(self):
+        response = self.client.post(
+            self.create_url(),
+            {
+                'name': 'Solo',
+                'lines_of_business': ['Life', 'MAPD'],
+                'certification_lines': ['Life', 'MAPD', 'Life'],
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['data']['certification_lines'], ['MAPD', 'Life'])
+
+    def test_certification_line_must_be_a_line_of_business(self):
+        response = self.client.post(
+            self.create_url(),
+            {'name': 'Solo', 'lines_of_business': ['MAPD'], 'certification_lines': ['Life']},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('certification_lines', response.data['errors'])
+
     def test_rejects_unknown_line(self):
         response = self.client.post(self.create_url(), {'name': 'Solo', 'lines_of_business': ['Dental']}, format='json')
         self.assertEqual(response.status_code, 400)
@@ -296,6 +318,14 @@ class CarrierDetailTests(CarrierAPITestCase):
         response = self.client.patch(self.detail_url(carrier), {'link': ''}, format='json')
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data['data']['link'], '')
+
+    def test_dropping_a_line_drops_its_certification(self):
+        carrier = make_carrier(lines_of_business=['MAPD', 'Life'], certification_lines=['MAPD', 'Life'])
+        response = self.client.patch(
+            self.detail_url(carrier), {'lines_of_business': ['MAPD']}, format='json'
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['certification_lines'], ['MAPD'])
 
     def test_patch_rejects_bad_link(self):
         carrier = make_carrier()

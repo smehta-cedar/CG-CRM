@@ -44,6 +44,17 @@ def ensure_lines_chosen(lines):
         raise ValidationError({'lines_of_business': ['Choose at least one line of business.']})
 
 
+def ensure_certification_lines(lines, certification_lines):
+    """A certification can only be required for a line the carrier writes."""
+    outside = [line for line in certification_lines if line not in lines]
+    if outside:
+        raise ValidationError({
+            'certification_lines': [
+                f"A certification can only be required for a line this carrier writes: {', '.join(outside)}."
+            ]
+        })
+
+
 # What a state row gets for a field left out. A PATCH (partial) skips the
 # input serializer's own defaults, so they are filled in here.
 LICENSE_DEFAULTS = {

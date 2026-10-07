@@ -428,11 +428,18 @@ class ContractCertificationTests(CertificationAPITestCase):
     def setUp(self):
         super().setUp()
         self.humana.lines_of_business = ['Medicare Supplement', 'MAPD']
+        self.humana.certification_lines = ['Medicare Supplement', 'MAPD']
         self.humana.save()
 
     def lines(self, **filters):
         rows = Certification.objects.filter(agent=self.agent, carrier=self.humana, **filters)
         return sorted(row.line_of_business for row in rows)
+
+    def test_skips_a_line_that_does_not_need_a_certification(self):
+        self.humana.certification_lines = ['MAPD']
+        self.humana.save()
+        add_contract_certifications(self.agent, self.humana, due_date=self.DUE)
+        self.assertEqual(self.lines(), ['MAPD'])
 
     def test_adds_one_row_per_line_and_skips_covered_ones(self):
         make_certification(self.agent, self.humana, 'MAPD', due_date=self.DUE)

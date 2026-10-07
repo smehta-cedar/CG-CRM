@@ -108,11 +108,7 @@ def ensure_carrier_free(carrier, exclude=None):
 
 
 def resolve_policy_types(pks):
-    """The live PolicyType rows for `pks`. Unknown ones are a 400 under
-    "policy_types"."""
-    wanted = set(pks)
-    policy_types = list(PolicyType.objects.filter(pk__in=wanted))
-    if len(policy_types) != len(wanted):
-        raise ValidationError({'policy_types': ['Unknown policy type.']})
-    return policy_types
+    """The live PolicyType rows for `pks`. Policy types are an add-on, not a
+    check: unknown or deleted ones are dropped, never a 400."""
+    return list(PolicyType.objects.filter(pk__in=set(pks)))
 

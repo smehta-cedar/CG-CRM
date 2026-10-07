@@ -30,8 +30,10 @@ CARRIER_STATUSES = (
 class Carrier(BaseModel):
     """An insurance carrier, e.g. "Humana".
 
-    Listed once however many lines of business it writes. Writing numbers
-    live on carrier contracts and portal logins on passwords, not here.
+    Listed once however many lines of business it writes. Of those,
+    certification_lines are the ones an appointed agent must be certified
+    for. Writing numbers live on carrier contracts and portal logins on
+    passwords, not here.
 
     `status` is one of CARRIER_STATUSES; `is_active` is derived from it
     (true only for "active") and never set on its own.
@@ -42,6 +44,9 @@ class Carrier(BaseModel):
     aliases = models.JSONField(default=list, blank=True)
     # At least one of LINES_OF_BUSINESS, kept in that order.
     lines_of_business = models.JSONField(default=list, blank=True)
+    # Lines that need an agent certification. Always a subset of
+    # lines_of_business, in the same order. Empty means none do.
+    certification_lines = models.JSONField(default=list, blank=True)
     # The carrier's site or agent portal. Blank when none.
     link = models.URLField(max_length=500, blank=True)
     status = models.CharField(max_length=10, choices=CARRIER_STATUSES, default='active', db_index=True)

@@ -76,7 +76,7 @@ def carrier_policy_create(request):
     data = serializer.validated_data
 
     carrier = resolve_carrier(data['carrier'])
-    policy_type = resolve_policy_type(data['policy_type'])
+    policy_type = resolve_policy_type(data.get('policy_type'))
     name = normalize_name(data['name'])
     ensure_policy_name_free(carrier, name)
     states = resolve_policy_states(data.get('available_states', []), carrier)

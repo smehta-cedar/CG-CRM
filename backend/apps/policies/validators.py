@@ -33,11 +33,11 @@ def resolve_carrier(pk):
 
 
 def resolve_policy_type(pk):
-    """The live policy type with `pk`; an unknown one is a 400 under "policy_type"."""
-    policy_type = PolicyType.objects.filter(pk=pk).first()
-    if policy_type is None:
-        raise ValidationError({'policy_type': ['Unknown policy type.']})
-    return policy_type
+    """The live policy type with `pk`, or None. Policy types are an optional
+    add-on: none, unknown or deleted is never a 400."""
+    if pk is None:
+        return None
+    return PolicyType.objects.filter(pk=pk).first()
 
 
 def ensure_policy_name_free(carrier, name, exclude=None):

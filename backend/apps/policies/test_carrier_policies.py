@@ -94,20 +94,30 @@ class CarrierPolicyCreateTests(CarrierPolicyAPITestCase):
         note = CarrierPolicyNote.objects.get(policy_id=response.data['data']['id'])
         self.assertNotIn('available_states', [change['field'] for change in note.changes])
 
-    def test_carrier_policy_type_and_name_are_required(self):
+    def test_carrier_and_name_are_required_policy_type_is_not(self):
         response = self.client.post(self.create_url(), {}, format='json')
         self.assertEqual(response.status_code, 400)
-        for field in ('carrier', 'policy_type', 'name'):
+        for field in ('carrier', 'name'):
             self.assertIn(field, response.data['errors'])
+        self.assertNotIn('policy_type', response.data['errors'])
 
-    def test_unknown_carrier_and_policy_type_are_400(self):
+    def test_policy_type_is_optional_and_unknown_is_ignored(self):
+        sample = {key: value for key, value in self.sample.items() if key != 'policy_type'}
+        response = self.client.post(self.create_url(), sample, format='json')
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNone(response.data['data']['policy_type'])
+        unknown = '00000000-0000-0000-0000-000000000000'
+        response = self.client.post(
+            self.create_url(), {**self.sample, 'name': 'Silver PPO', 'policy_type': unknown}, format='json'
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNone(response.data['data']['policy_type'])
+
+    def test_unknown_carrier_is_400(self):
         unknown = '00000000-0000-0000-0000-000000000000'
         response = self.client.post(self.create_url(), {**self.sample, 'carrier': unknown}, format='json')
         self.assertEqual(response.status_code, 400)
         self.assertIn('carrier', response.data['errors'])
-        response = self.client.post(self.create_url(), {**self.sample, 'policy_type': unknown}, format='json')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('policy_type', response.data['errors'])
 
     def test_rejects_state_outside_carrier_footprint_and_names_it(self):
         response = self.client.post(self.create_url(), {**self.sample, 'available_states': ['FL', 'AK']}, format='json')

@@ -11,6 +11,7 @@ from apps.carriers.utils import (
     diff_snapshots,
     filter_carriers,
     get_carrier_or_404,
+    normalize_lines,
     normalize_name,
     record_note,
     save_carrier,
@@ -20,6 +21,7 @@ from apps.carriers.utils import (
 )
 from apps.carriers.validators import (
     ensure_aliases_free,
+    ensure_certification_lines,
     ensure_lines_chosen,
     ensure_name_free,
     resolve_licenses,
@@ -77,9 +79,11 @@ def carrier_create(request):
     name = normalize_name(data['name'])
     aliases = data.get('aliases', [])
     lines = data['lines_of_business']
+    certification_lines = data.get('certification_lines', [])
     ensure_name_free(name)
     ensure_aliases_free(aliases, name)
     ensure_lines_chosen(lines)
+    ensure_certification_lines(lines, certification_lines)
     licenses = resolve_licenses(data.get('licenses', []))
 
     with transaction.atomic():
@@ -87,6 +91,7 @@ def carrier_create(request):
             name=name,
             aliases=aliases,
             lines_of_business=lines,
+            certification_lines=certification_lines,
             link=data.get('link', ''),
             status=data.get('status', 'active'),
             created_by=request.user,
@@ -127,6 +132,15 @@ def carrier_detail(request, pk):
 
         if 'lines_of_business' in fields:
             ensure_lines_chosen(fields['lines_of_business'])
+
+        lines = fields.get('lines_of_business', carrier.lines_of_business)
+        if 'certification_lines' in fields:
+            ensure_certification_lines(lines, fields['certification_lines'])
+        elif 'lines_of_business' in fields:
+            # A line the carrier no longer writes cannot still need a certification.
+            fields['certification_lines'] = normalize_lines(
+                line for line in carrier.certification_lines if line in lines
+            )
 
         licenses = None
         if 'licenses' in fields:

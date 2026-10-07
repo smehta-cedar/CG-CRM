@@ -92,12 +92,16 @@ class AgencyContractCreateTests(AgencyContractAPITestCase):
         self.make_contract().delete()
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 201)
 
-    def test_rejects_unknown_policy_type(self):
+    def test_ignores_unknown_policy_type(self):
         response = self.client.post(
-            self.create_url(), {**self.sample, 'policy_types': [str(self.carrier.pk)]}, format='json'
+            self.create_url(),
+            {**self.sample, 'policy_types': [str(self.carrier.pk), str(self.advantage.pk)]},
+            format='json',
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data['errors']['policy_types'], ['Unknown policy type.'])
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            [policy_type['name'] for policy_type in response.data['data']['policy_types']], ['Medicare Advantage']
+        )
 
     def test_edit_note_lists_only_changes(self):
         contract = self.make_contract(contract_number='X1')

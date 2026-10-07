@@ -11,7 +11,8 @@ from .policy_types import PolicyType
 class CarrierPolicy(BaseModel):
     """One named policy a carrier offers, e.g. Humana's "Gold Plus HMO".
 
-    It points at one policy type from the catalog. Agency contracts,
+    It may point at one policy type from the catalog, an optional add-on
+    that nothing is checked against. Agency contracts,
     commissions, agent certifications and counties are not modelled here.
 
     `available_states` is where the policy can be sold: always within the
@@ -21,7 +22,9 @@ class CarrierPolicy(BaseModel):
     """
 
     carrier = models.ForeignKey(Carrier, on_delete=models.CASCADE, related_name='policies')
-    policy_type = models.ForeignKey(PolicyType, on_delete=models.PROTECT, related_name='carrier_policies')
+    policy_type = models.ForeignKey(
+        PolicyType, on_delete=models.SET_NULL, null=True, blank=True, related_name='carrier_policies'
+    )
     name = models.CharField(max_length=255)
     available_states = models.ManyToManyField(State, blank=True, related_name='carrier_policies')
 

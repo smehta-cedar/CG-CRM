@@ -28,6 +28,11 @@ class CarrierSerializer(serializers.ModelSerializer):
 
     aliases = serializers.ListField(child=serializers.CharField(), read_only=True)
     lines_of_business = serializers.ListField(child=serializers.CharField(), read_only=True)
+    certification_lines = serializers.ListField(
+        child=serializers.CharField(),
+        read_only=True,
+        help_text='Lines of business that need an agent certification, in catalog order.',
+    )
     available_states = serializers.ListField(
         child=serializers.CharField(),
         source='state_codes',
@@ -50,6 +55,7 @@ class CarrierSerializer(serializers.ModelSerializer):
             'name',
             'aliases',
             'lines_of_business',
+            'certification_lines',
             'link',
             'available_states',
             'licenses',
@@ -116,6 +122,14 @@ def _lines_field(required):
     )
 
 
+def _certification_lines_field():
+    return serializers.ListField(
+        child=serializers.ChoiceField(choices=LINES_OF_BUSINESS),
+        required=False,
+        help_text='Lines that need an agent certification. Each must also be a line of business. Empty means none.',
+    )
+
+
 def _link_field():
     return serializers.URLField(
         max_length=500,
@@ -165,6 +179,7 @@ class CarrierCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
     aliases = _aliases_field()
     lines_of_business = _lines_field(required=True)
+    certification_lines = _certification_lines_field()
     link = _link_field()
     licenses = _licenses_field()
     status = _status_field()
@@ -175,6 +190,9 @@ class CarrierCreateSerializer(serializers.Serializer):
     def validate_lines_of_business(self, value):
         return normalize_lines(value)
 
+    def validate_certification_lines(self, value):
+        return normalize_lines(value)
+
 
 class CarrierUpdateSerializer(serializers.Serializer):
     """Send only the fields that change."""
@@ -182,6 +200,7 @@ class CarrierUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255, required=False)
     aliases = _aliases_field()
     lines_of_business = _lines_field(required=False)
+    certification_lines = _certification_lines_field()
     link = _link_field()
     licenses = _licenses_field()
     status = _status_field()
@@ -190,6 +209,9 @@ class CarrierUpdateSerializer(serializers.Serializer):
         return normalize_aliases(value)
 
     def validate_lines_of_business(self, value):
+        return normalize_lines(value)
+
+    def validate_certification_lines(self, value):
         return normalize_lines(value)
 
 

@@ -35,7 +35,7 @@ agency_contract_create = extend_schema(
     summary='Create an agency contract',
     description=(
         'One live contract per carrier; a taken carrier is a 400 under carrier. policy_types are '
-        'catalog policy types. The contract number may be blank; agents can only be given the '
+        'optional catalog policy types; unknown ones are ignored. The contract number may be blank; agents can only be given the '
         'carrier once it is set. The agency\'s login at the carrier is an agency password. '
         'Records an "added" note listing every filled field.'
     ),

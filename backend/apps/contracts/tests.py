@@ -207,6 +207,7 @@ class ContractCertificationTests(ContractAPITestCase):
         from apps.policies.utils import certification_due_date
 
         self.carrier.lines_of_business = ['Medicare Supplement', 'MAPD']
+        self.carrier.certification_lines = ['Medicare Supplement', 'MAPD']
         self.carrier.save()
         response = self.client.post(self.create_url(), self.sample, format='json')
         self.assertEqual(response.status_code, 201, response.data)
