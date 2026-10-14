@@ -92,7 +92,7 @@ def carrier_create(request):
             aliases=aliases,
             lines_of_business=lines,
             certification_lines=certification_lines,
-            link=data.get('link', ''),
+            links=data.get('links', []),
             status=data.get('status', 'active'),
             created_by=request.user,
             updated_by=request.user,

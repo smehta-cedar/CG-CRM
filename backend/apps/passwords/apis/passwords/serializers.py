@@ -19,9 +19,11 @@ class AgencySummarySerializer(serializers.ModelSerializer):
 
 
 class CarrierSummarySerializer(serializers.ModelSerializer):
+    """The carrier as a password shows it, with its named links (the portal and the rest)."""
+
     class Meta:
         model = Carrier
-        fields = ('id', 'name', 'status', 'is_active')
+        fields = ('id', 'name', 'status', 'is_active', 'links')
 
 
 class PasswordSerializer(serializers.ModelSerializer):
@@ -43,7 +45,6 @@ class PasswordSerializer(serializers.ModelSerializer):
             'carrier',
             'username',
             'portal_password',
-            'link',
             'status',
             'created_at',
             'updated_at',
@@ -119,24 +120,15 @@ def _portal_password_field(required):
     return serializers.CharField(max_length=255, required=required, allow_blank=True, trim_whitespace=False)
 
 
-def _link_field():
-    return serializers.URLField(
-        max_length=2000,
-        required=False,
-        allow_blank=True,
-        help_text="The carrier portal's sign-in page. Blank for none.",
-    )
-
-
 class PasswordCreateSerializer(serializers.Serializer):
     """Send agent_id or agency_id, not both."""
 
     agent_id = _agent_id_field()
     agency_id = _agency_id_field()
     carrier_id = _carrier_id_field(required=True)
-    username = serializers.CharField(max_length=255)
-    portal_password = _portal_password_field(required=True)
-    link = _link_field()
+    # Blank only while the status is pending; the view checks that.
+    username = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    portal_password = _portal_password_field(required=False)
     status = serializers.ChoiceField(choices=PASSWORD_STATUSES, required=False)
 
 
@@ -147,9 +139,8 @@ class PasswordUpdateSerializer(serializers.Serializer):
     agent_id = _agent_id_field()
     agency_id = _agency_id_field()
     carrier_id = _carrier_id_field(required=False)
-    username = serializers.CharField(max_length=255, required=False)
+    username = serializers.CharField(max_length=255, required=False, allow_blank=True)
     portal_password = _portal_password_field(required=False)
-    link = _link_field()
     status = serializers.ChoiceField(choices=PASSWORD_STATUSES, required=False)
 
 

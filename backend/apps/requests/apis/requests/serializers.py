@@ -72,6 +72,20 @@ class RequestCreateSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True)
 
 
+class AgentSelfRequestCreateSerializer(serializers.Serializer):
+    """What a signed-in agent files for themselves. The view sets `agent` from
+    the account; the body never picks another agent."""
+
+    type = serializers.ChoiceField(choices=AGENT_REQUEST_TYPES)
+    carrier_id = serializers.PrimaryKeyRelatedField(
+        source='carrier', queryset=Carrier.objects.all(), pk_field=serializers.UUIDField(), required=False, allow_null=True
+    )
+    state = serializers.CharField(min_length=2, max_length=2, required=False, allow_blank=True)
+    start_date = serializers.DateField(required=False, allow_null=True)
+    end_date = serializers.DateField(required=False, allow_null=True)
+    note = serializers.CharField(required=False, allow_blank=True)
+
+
 class MerchRequestCreateSerializer(serializers.Serializer):
     """An order from the public shop, filed by the shop's service account.
     `color` is the product colour's id; the order stores its label."""

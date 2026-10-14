@@ -1,18 +1,22 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import BasePermission, IsAuthenticated
 
 from apps.base.api.pagination import paginate
-from apps.base.api.permissions import module_permission
+from apps.base.api.permissions import METHOD_ACTIONS, module_permission
 from apps.base.api.response import APIResponse
-from apps.notifications.services import notify_admins_of_request
+from apps.carriers.models import Carrier
+from apps.notifications.services import notify_admins_of_request, notify_agent_of_decision
+from apps.passwords.apis.passwords.serializers import CarrierSummarySerializer
 from apps.requests.models import Request
 from apps.requests.validators import ensure_fields_for_type, resolve_state
 from apps.storefront.validators import ensure_order_fits
 
 from . import swagger
 from .serializers import (
+    AgentSelfRequestCreateSerializer,
     MerchRequestCreateSerializer,
     RequestCreateSerializer,
     RequestListQuerySerializer,
@@ -21,10 +25,40 @@ from .serializers import (
 )
 
 CAN_MANAGE_REQUESTS = module_permission('requests')
+AGENT_VIEW_REQUESTS = 'agent_view.requests'
+
+
+class CanAccessOwnRequests(BasePermission):
+    """Signed-in agents with My requests; staff keep using CAN_MANAGE_REQUESTS."""
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not (user and user.is_authenticated and user.agent_id):
+            return False
+        action = METHOD_ACTIONS.get(request.method)
+        return action is not None and user.has_permission(AGENT_VIEW_REQUESTS, action)
 
 
 def get_request_or_404(pk):
     return get_object_or_404(Request.objects.select_related('agent', 'carrier', 'state', 'product', 'created_by'), pk=pk)
+
+
+def _create_agent_request(user, data):
+    ensure_fields_for_type(data)
+    is_placement = data['type'] in ('licensing', 'contract')
+    filed = Request.objects.create(
+        type=data['type'],
+        agent=data['agent'],
+        carrier=data.get('carrier') if is_placement else None,
+        state=resolve_state(data['state']) if is_placement else None,
+        start_date=data.get('start_date') if data['type'] == 'day_off' else None,
+        end_date=data.get('end_date') if data['type'] == 'day_off' else None,
+        note=data.get('note', '').strip(),
+        created_by=user,
+        updated_by=user,
+    )
+    notify_admins_of_request(filed, user)
+    return filed
 
 
 @swagger.request_list
@@ -55,22 +89,36 @@ def request_list(request):
 def request_create(request):
     serializer = RequestCreateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    data = serializer.validated_data
+    filed = _create_agent_request(request.user, serializer.validated_data)
+    return APIResponse(RequestSerializer(filed).data, 'Request filed successfully.', status=status.HTTP_201_CREATED)
 
-    ensure_fields_for_type(data)
-    is_placement = data['type'] in ('licensing', 'contract')
-    filed = Request.objects.create(
-        type=data['type'],
-        agent=data['agent'],
-        carrier=data.get('carrier') if is_placement else None,
-        state=resolve_state(data['state']) if is_placement else None,
-        start_date=data.get('start_date') if data['type'] == 'day_off' else None,
-        end_date=data.get('end_date') if data['type'] == 'day_off' else None,
-        note=data.get('note', '').strip(),
-        created_by=request.user,
-        updated_by=request.user,
-    )
-    notify_admins_of_request(filed, request.user)
+
+@swagger.request_mine
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated, CanAccessOwnRequests])
+def request_mine(request):
+    """This agent's own requests (and carriers to file against). Staff get 403."""
+    agent = request.user.agent
+    if agent is None:
+        raise PermissionDenied('No agent profile is linked to this account.')
+
+    if request.method == 'GET':
+        rows = Request.objects.filter(agent=agent).select_related(
+            'agent', 'carrier', 'state', 'product', 'created_by'
+        )
+        carriers = Carrier.objects.filter(is_active=True).order_by('name')
+        return APIResponse(
+            {
+                'requests': RequestSerializer(rows, many=True).data,
+                'carriers': CarrierSummarySerializer(carriers, many=True).data,
+            },
+            'Your requests fetched successfully.',
+        )
+
+    serializer = AgentSelfRequestCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = {**serializer.validated_data, 'agent': agent}
+    filed = _create_agent_request(request.user, data)
     return APIResponse(RequestSerializer(filed).data, 'Request filed successfully.', status=status.HTTP_201_CREATED)
 
 
@@ -101,6 +149,7 @@ def request_merch_create(request):
         created_by=request.user,
         updated_by=request.user,
     )
+    notify_admins_of_request(filed, request.user)
     return APIResponse(RequestSerializer(filed).data, 'Order filed successfully.', status=status.HTTP_201_CREATED)
 
 
@@ -120,10 +169,13 @@ def request_detail(request, pk):
         fields = dict(serializer.validated_data)
         if 'note' in fields:
             fields['note'] = fields['note'].strip()
+        previous_status = filed.status
         for name, value in fields.items():
             setattr(filed, name, value)
         filed.updated_by = request.user
         filed.save(update_fields=[*fields, 'updated_by'])
+        if 'status' in fields:
+            notify_agent_of_decision(filed, request.user, previous_status)
         return APIResponse(RequestSerializer(filed).data, 'Request updated successfully.')
 
     # DELETE: soft delete.

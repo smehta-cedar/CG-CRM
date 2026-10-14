@@ -11,7 +11,7 @@ from .models import Notification
 class NotificationTestCase(APITestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser(email='admin@example.com', password='Sup3r-secret!', full_name='Admin')
-        admin_role = Role.objects.create(name='Admin')
+        admin_role = Role.objects.get(name='Admin')  # built in
         staff_role = Role.objects.create(name='Staff')
         RolePermission.objects.create(role=staff_role, module='requests', can_view=True, can_create=True)
         self.role_admin = User.objects.create_user(email='boss@example.com', password='x', full_name='Boss')
@@ -54,6 +54,73 @@ class NotifyOnRequestTests(NotificationTestCase):
         self.role_admin.save()
         self.file_request(self.staff)
         self.assertEqual(list(Notification.objects.values_list('recipient__email', flat=True)), ['admin@example.com'])
+
+    def test_merch_order_notifies_admins(self):
+        from apps.storefront.models import Product
+
+        product = Product.objects.create(
+            name='Tee',
+            price='28.00',
+            colors=[{'id': 'teal', 'label': 'Teal', 'hex': '#37b38f'}],
+            sizes=['M'],
+            max_quantity=2,
+        )
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(
+            reverse('requests:apis:requests:merch'),
+            {
+                'product_id': str(product.pk),
+                'buyer_name': 'Shop Check',
+                'email': 'buyer@example.com',
+                'phone': '(555)010-9999',
+                'address': '1 Main St',
+                'size': 'M',
+                'color': 'teal',
+                'quantity': 1,
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        recipients = set(Notification.objects.values_list('recipient__email', flat=True))
+        self.assertEqual(recipients, {'admin@example.com', 'boss@example.com'})
+        notification = Notification.objects.get(recipient=self.admin)
+        self.assertEqual(notification.title, 'Sam Staff filed a merch request')
+        self.assertEqual(notification.body, 'Shop Check · Tee (1 × M)')
+        self.assertEqual(notification.link, '/hr')
+
+    def test_decision_notifies_the_linked_agent(self):
+        agent_user = User.objects.create_user(
+            email='maria@example.com', password='x', full_name='Maria Alva', agent=self.agent
+        )
+        self.file_request(self.staff)
+        from apps.requests.models import Request
+
+        filed = Request.objects.get()
+        Notification.objects.all().delete()
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            reverse('requests:apis:requests:detail', args=[filed.pk]),
+            {'status': 'approved'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        notification = Notification.objects.get(recipient=agent_user)
+        self.assertEqual(notification.title, 'Your licensing request was approved')
+        self.assertEqual(notification.link, '/agent/calendar')
+
+    def test_decision_skips_when_agent_has_no_login(self):
+        self.file_request(self.staff)
+        from apps.requests.models import Request
+
+        filed = Request.objects.get()
+        Notification.objects.all().delete()
+        self.client.force_authenticate(self.admin)
+        self.client.patch(
+            reverse('requests:apis:requests:detail', args=[filed.pk]),
+            {'status': 'denied'},
+            format='json',
+        )
+        self.assertFalse(Notification.objects.exists())
 
 
 class NotificationAPITests(NotificationTestCase):

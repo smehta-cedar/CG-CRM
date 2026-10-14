@@ -18,7 +18,8 @@ class Password(BaseModel):
     """One portal login at one carrier: the portal username and password.
     It belongs to an agent or to the agency itself, exactly one of the two.
     Distinct from the app's own sign-in. The writing number (producer ID)
-    lives on the carrier contract.
+    lives on the carrier contract. Logins that aren't at a carrier are
+    site passwords (SitePassword) instead.
 
     The portal password is stored as entered so it can be shown and copied;
     access is limited to the `passwords` permission module. `is_active`
@@ -29,10 +30,9 @@ class Password(BaseModel):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='passwords', null=True, blank=True)
     agency = models.ForeignKey(Agency, on_delete=models.CASCADE, related_name='passwords', null=True, blank=True)
     carrier = models.ForeignKey(Carrier, on_delete=models.CASCADE, related_name='passwords')
-    username = models.CharField(max_length=255)
-    portal_password = models.CharField(max_length=255)
-    # The carrier portal's sign-in page. Blank when none.
-    link = models.URLField(max_length=2000, blank=True)
+    # Both may be blank while the status is pending (the API enforces it).
+    username = models.CharField(max_length=255, blank=True)
+    portal_password = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=10, choices=PASSWORD_STATUSES, default='active')
 
     class Meta(BaseModel.Meta):

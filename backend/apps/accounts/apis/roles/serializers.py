@@ -32,10 +32,15 @@ class RoleSerializer(serializers.ModelSerializer):
 
     permissions = RolePermissionSerializer(many=True, read_only=True)
     user_count = serializers.IntegerField(read_only=True, help_text='Live users assigned this role.')
+    is_system = serializers.BooleanField(
+        read_only=True, help_text='Built-in (Admin, Operations, Agent): cannot be deleted, renamed or switched off.'
+    )
 
     class Meta:
         model = Role
-        fields = ('id', 'name', 'description', 'is_active', 'permissions', 'user_count', 'created_at', 'updated_at')
+        fields = (
+            'id', 'name', 'description', 'is_active', 'is_system', 'permissions', 'user_count', 'created_at', 'updated_at'
+        )
         read_only_fields = fields
 
 

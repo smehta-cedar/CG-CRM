@@ -388,7 +388,7 @@ class AgencyLicenseTests(AgencyAPITestCase):
         self.assertEqual([change['field'] for change in agency.notes.get().changes], ['license_numbers'])
 
     def test_every_license_status_is_accepted(self):
-        for status in ('active', 'pending', 'review', 'applied', 'expired', 'cancelled'):
+        for status in ('active', 'pending', 'applied', 'expired', 'cancelled'):
             response = self.client.post(self.create_url(), {**SAMPLE, 'name': f'Agency {status}', 'npn': '', 'licenses': [{'state': 'TX', 'status': status}]}, format='json')
             self.assertEqual(response.status_code, 201, response.data)
             self.assertEqual(response.data['data']['licenses'][0]['status'], status)
@@ -402,3 +402,27 @@ class AgencyLicenseTests(AgencyAPITestCase):
         response = self.client.post(self.create_url(), {**SAMPLE, 'licenses': [{'state': 'ZZ'}]}, format='json')
         self.assertEqual(response.status_code, 400)
         self.assertIn('licenses', response.data['errors'])
+
+    def test_patch_sets_license_lines_and_records_note(self):
+        agency = make_agency()
+        agency.licenses.create(state=State.objects.get(code='TX'), license_number='1', life=True)
+        response = self.client.patch(
+            self.detail_url(agency),
+            {
+                'licenses': [
+                    {'state': 'TX', 'license_number': '1', 'life': True, 'health': True},
+                    {'state': 'FL', 'license_number': '2', 'health': True},
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data['data']['licenses']
+        self.assertEqual(
+            [(row['state'], row['life'], row['health']) for row in rows],
+            [('FL', False, True), ('TX', True, True)],
+        )
+        self.assertIn(
+            {'field': 'license_lines', 'from': 'TX Life', 'to': 'FL Health, TX Life & Health'},
+            agency.notes.get().changes,
+        )

@@ -86,6 +86,7 @@ def contract_create(request):
             agent=agent,
             carrier=carrier,
             writing_number=writing_number,
+            status=data.get('status', 'active'),
             created_by=request.user,
             updated_by=request.user,
         )

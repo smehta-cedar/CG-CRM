@@ -76,6 +76,7 @@ class ContractCreateTests(ContractAPITestCase):
                 {'field': 'agent', 'from': '', 'to': 'Maria Alva'},
                 {'field': 'carrier', 'from': '', 'to': 'Humana'},
                 {'field': 'writing_number', 'from': '', 'to': 'H4471902'},
+                {'field': 'status', 'from': '', 'to': 'active'},
                 {'field': 'appointed_states', 'from': '', 'to': 'FL, TX'},
             ],
         )
@@ -162,6 +163,18 @@ class ContractDetailTests(ContractAPITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data['data']['appointed_states'], ['TX'])
         self.assertEqual(contract.notes.get().changes, [{'field': 'appointed_states', 'from': 'FL, TX', 'to': 'TX'}])
+
+    def test_patch_status_records_note(self):
+        contract = self.make_contract(states=['TX'])
+        response = self.client.patch(self.detail_url(contract), {'status': 'pending'}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['status'], 'pending')
+        self.assertEqual(contract.notes.get().changes, [{'field': 'status', 'from': 'active', 'to': 'pending'}])
+
+    def test_rejects_unknown_status(self):
+        response = self.client.post(self.create_url(), {**self.sample, 'status': 'expired'}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('status', response.data['errors'])
 
     def test_patch_rechecks_ceiling_when_carrier_changes(self):
         contract = self.make_contract(states=['TX'])

@@ -14,7 +14,13 @@ from apps.accounts.utils import (
     search_roles,
     set_role_permissions,
 )
-from apps.accounts.validators import ensure_role_name_free, ensure_role_unassigned, ensure_superuser
+from apps.accounts.validators import (
+    ensure_role_deletable,
+    ensure_role_name_free,
+    ensure_role_unassigned,
+    ensure_superuser,
+    ensure_system_role_fields,
+)
 from apps.base.api.permissions import IsSuperuser, module_permission
 from apps.base.api.response import APIResponse
 
@@ -99,6 +105,11 @@ def role_detail(request, pk):
 
         if 'name' in fields:
             fields['name'] = normalize_name(fields['name'])
+        ensure_system_role_fields(role, fields)
+        if role.is_system:
+            # Same name in another case: keep the built-in spelling.
+            fields.pop('name', None)
+        if 'name' in fields:
             ensure_role_name_free(fields['name'], exclude=role)
 
         with transaction.atomic():
@@ -109,7 +120,8 @@ def role_detail(request, pk):
         role = get_role_or_404(role.pk)
         return APIResponse(RoleSerializer(role).data, 'Role updated successfully.')
 
-    # DELETE: soft delete, once no live user holds the role.
+    # DELETE: soft delete, once no live user holds the role. Built-in roles stay.
+    ensure_role_deletable(role)
     ensure_role_unassigned(role)
     role.delete(user=request.user)
     return APIResponse(None, 'Role deleted successfully.')

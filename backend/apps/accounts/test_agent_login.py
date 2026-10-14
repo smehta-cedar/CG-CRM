@@ -22,7 +22,7 @@ def make_agent(**overrides):
 
 def make_agent_role(*sections, extra=()):
     """The role every agent account uses, granting view on these agent_view sections and `extra` modules."""
-    role = Role.objects.create(name='Agent')
+    role = Role.objects.get(name='Agent')  # built in
     for module in [f'agent_view.{section}' for section in sections] + list(extra):
         RolePermission.objects.create(role=role, module=module, can_view=True)
     return role
@@ -66,7 +66,7 @@ class AgentCodeRequestTests(AgentAuthTestCase):
         sent = self.request_code('nobody@example.com')
         make_agent(name='Shared One', npn='10000006', email='shared@example.com')
         make_agent(name='Shared Two', npn='10000007', email='shared@example.com')
-        make_agent(name='Inactive', npn='10000008', email='inactive@example.com', is_active=False)
+        make_agent(name='Inactive', npn='10000008', email='inactive@example.com', status='inactive')
         User.objects.create_user(email='staff@example.com', password='Sup3r-secret!', full_name='Staff')
         make_agent(name='Staff Email', npn='10000009', email='staff@example.com')
         replies = [
@@ -140,7 +140,7 @@ class AgentLoginTests(AgentAuthTestCase):
     def test_agent_made_inactive_after_the_email_is_blocked(self):
         agent = make_agent()
         self.request_code('maria.alvarez@example.com')
-        agent.is_active = False
+        agent.status = 'inactive'
         agent.save()
         response = self.sign_in('maria.alvarez@example.com', self.emailed_code())
         self.assertEqual(response.status_code, 403)

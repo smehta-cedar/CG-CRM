@@ -8,11 +8,11 @@ class AgencyLicenseSerializer(serializers.ModelSerializer):
     """One licence row as it appears on the agency."""
 
     state = serializers.CharField(source='state.code', read_only=True)
-    status = serializers.ChoiceField(choices=LICENSE_STATUSES, read_only=True)
+    status = serializers.ChoiceField(choices=LICENSE_STATUSES, source='current_status', read_only=True)
 
     class Meta:
         model = AgencyStateLicense
-        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date')
+        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date', 'life', 'health')
         read_only_fields = fields
 
 
@@ -95,6 +95,8 @@ class AgencyLicenseInputSerializer(serializers.Serializer):
         default=None,
         help_text='Left out or null: a new row runs two years from its start and a kept row keeps its date.',
     )
+    life = serializers.BooleanField(required=False, default=False, help_text='Covers life insurance.')
+    health = serializers.BooleanField(required=False, default=False, help_text='Covers health insurance.')
 
     def validate(self, data):
         start, end = data.get('start_date'), data.get('end_date')

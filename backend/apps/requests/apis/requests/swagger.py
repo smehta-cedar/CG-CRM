@@ -9,6 +9,7 @@ from apps.base.api.schema import (
 )
 
 from .serializers import (
+    AgentSelfRequestCreateSerializer,
     MerchRequestCreateSerializer,
     RequestCreateSerializer,
     RequestListQuerySerializer,
@@ -39,6 +40,25 @@ request_create = extend_schema(
     ),
     request=RequestCreateSerializer,
     responses={201: api_response(RequestSerializer), **error_responses(400, 401, 403)},
+)
+
+
+request_mine = extend_schema(
+    methods=['GET', 'POST'],
+    operation_id='requests_mine',
+    tags=TAGS,
+    summary="This agent's own requests",
+    description=(
+        'GET lists only the signed-in agent\'s requests plus active carriers for the create form. '
+        'POST files a request for that agent (no `agent_id` in the body). Requires '
+        '`agent_view.requests`.'
+    ),
+    request=AgentSelfRequestCreateSerializer,
+    responses={
+        200: api_response(RequestSerializer),
+        201: api_response(RequestSerializer),
+        **error_responses(400, 401, 403),
+    },
 )
 
 

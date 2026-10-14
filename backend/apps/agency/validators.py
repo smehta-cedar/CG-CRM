@@ -16,11 +16,11 @@ def ensure_name_free(name, exclude=None):
 
 
 def resolve_licenses(licenses):
-    """(State, number, status, start_date, end_date) tuples for a list of
-    {"state", "license_number", "status", "start_date", "end_date"}; unknown
-    codes are a 400 and a repeated state keeps its last entry. A missing
-    status or date is None: sync_licenses defaults it for a new row and
-    leaves it alone on a kept one."""
+    """(State, number, life, health, status, start_date, end_date) tuples for a
+    list of {"state", "license_number", "life", "health", "status",
+    "start_date", "end_date"}; unknown codes are a 400 and a repeated state
+    keeps its last entry. A missing status or date is None: sync_licenses
+    defaults it for a new row and leaves it alone on a kept one."""
     if not licenses:
         return []
     wanted = {}
@@ -28,6 +28,8 @@ def resolve_licenses(licenses):
         code = item['state'].strip().upper()
         wanted[code] = (
             item.get('license_number', ''),
+            bool(item.get('life')),
+            bool(item.get('health')),
             item.get('status'),
             item.get('start_date'),
             item.get('end_date'),

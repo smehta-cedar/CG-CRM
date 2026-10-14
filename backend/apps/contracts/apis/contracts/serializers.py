@@ -3,6 +3,7 @@ from rest_framework import serializers
 from apps.agents.models import Agent
 from apps.carriers.models import Carrier
 from apps.contracts.models import CarrierContract, CarrierContractNote
+from apps.contracts.models.contracts import CONTRACT_STATUSES
 # One schema component each for the {id, name, is_active} summaries.
 from apps.passwords.apis.passwords.serializers import AgentSummarySerializer, CarrierSummarySerializer
 
@@ -26,6 +27,7 @@ class ContractSerializer(serializers.ModelSerializer):
             'agent',
             'carrier',
             'writing_number',
+            'status',
             'appointed_states',
             'created_at',
             'updated_at',
@@ -94,6 +96,7 @@ class ContractCreateSerializer(serializers.Serializer):
     agent_id = _agent_id_field(required=True)
     carrier_id = _carrier_id_field(required=True)
     writing_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    status = serializers.ChoiceField(choices=CONTRACT_STATUSES, required=False, default='active')
     appointed_states = _states_field()
 
 
@@ -103,6 +106,7 @@ class ContractUpdateSerializer(serializers.Serializer):
     agent_id = _agent_id_field(required=False)
     carrier_id = _carrier_id_field(required=False)
     writing_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    status = serializers.ChoiceField(choices=CONTRACT_STATUSES, required=False)
     appointed_states = _states_field()
 
 

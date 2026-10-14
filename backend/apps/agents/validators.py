@@ -54,11 +54,11 @@ def resolve_state(code, field):
 
 
 def resolve_licenses(licenses):
-    """(State, number, life, health, start_date, end_date) tuples for a list
-    of {"state", "license_number", "life", "health", "start_date",
-    "end_date"}; unknown codes are a 400 and a repeated state keeps its last
-    entry. A missing date is None: sync_licenses defaults it for a new row
-    and leaves it alone on a kept one."""
+    """(State, number, life, health, start_date, end_date, status) tuples for
+    a list of {"state", "license_number", "life", "health", "start_date",
+    "end_date", "status"}; unknown codes are a 400 and a repeated state keeps
+    its last entry. A missing date or status is None: sync_licenses defaults
+    it for a new row and leaves it alone on a kept one."""
     if not licenses:
         return []
     wanted = {}
@@ -70,6 +70,7 @@ def resolve_licenses(licenses):
             bool(item.get('health')),
             item.get('start_date'),
             item.get('end_date'),
+            item.get('status'),
         )
     states = {state.code: state for state in State.objects.filter(code__in=wanted)}
     unknown = sorted(set(wanted) - set(states))

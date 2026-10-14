@@ -24,10 +24,11 @@ class AgentNoteInline(admin.TabularInline):
 
 @admin.register(Agent)
 class AgentAdmin(admin.ModelAdmin):
-    list_display = ('name', 'npn', 'email', 'phone', 'states', 'is_active', 'created_at')
-    list_filter = ('is_active',)
+    list_display = ('name', 'npn', 'email', 'phone', 'states', 'status', 'created_at')
+    list_filter = ('status',)
     search_fields = ('name', 'aliases', 'npn', 'email', 'phone')
-    readonly_fields = AUDIT_FIELDS
+    # is_active follows status (Agent.save), so only status is edited here.
+    readonly_fields = ('is_active', *AUDIT_FIELDS)
     inlines = (AgentStateLicenseInline, AgentNoteInline)
 
     @admin.display(description='Licensed states')

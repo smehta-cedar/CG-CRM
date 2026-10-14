@@ -8,7 +8,7 @@ AUDIT_FIELDS = ('created_at', 'updated_at', 'created_by', 'updated_by', 'deleted
 class AgencyStateLicenseInline(admin.TabularInline):
     model = AgencyStateLicense
     extra = 0
-    fields = ('state', 'license_number', 'status', 'start_date', 'end_date')
+    fields = ('state', 'license_number', 'life', 'health', 'status', 'start_date', 'end_date')
     autocomplete_fields = ('state',)
 
 

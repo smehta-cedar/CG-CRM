@@ -141,3 +141,46 @@ class RequestPermissionTests(RequestAPITestCase):
             self.client.patch(self.url('detail', response.data['data']['id']), {'status': 'approved'}, format='json').status_code,
             403,
         )
+
+
+class AgentOwnRequestTests(RequestAPITestCase):
+    def setUp(self):
+        super().setUp()
+        agent_role = Role.objects.get(name='Agent')  # built in
+        RolePermission.objects.create(
+            role=agent_role, module='agent_view.requests', can_view=True, can_create=True
+        )
+        self.agent_user = User.objects.create_user(
+            email='maria@example.com', password='x', full_name='Maria Alva', agent=self.agent
+        )
+        other = Agent.objects.create(name='Other', npn='2')
+        Request.objects.create(type='day_off', agent=other, start_date='2026-09-01', end_date='2026-09-01')
+        Request.objects.create(
+            type='day_off', agent=self.agent, start_date='2026-10-01', end_date='2026-10-02'
+        )
+
+    def test_mine_lists_only_own_and_carriers(self):
+        self.client.force_authenticate(self.agent_user)
+        response = self.client.get(self.url('mine'))
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data['data']['requests']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['agent']['id'], str(self.agent.pk))
+        self.assertEqual(response.data['data']['carriers'][0]['name'], 'Humana')
+
+    def test_mine_create_forces_signed_in_agent(self):
+        self.client.force_authenticate(self.agent_user)
+        response = self.client.post(
+            self.url('mine'),
+            {'type': 'day_off', 'start_date': '2026-11-01', 'end_date': '2026-11-01'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['data']['agent']['id'], str(self.agent.pk))
+        self.assertEqual(response.data['data']['status'], 'pending')
+
+    def test_staff_cannot_use_mine(self):
+        staff = User.objects.create_user(email='staff@example.com', password='x', full_name='Staff')
+        staff.roles.set([make_role(can_view=True, can_create=True)])
+        self.client.force_authenticate(staff)
+        self.assertEqual(self.client.get(self.url('mine')).status_code, 403)

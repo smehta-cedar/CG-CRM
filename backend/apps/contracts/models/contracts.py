@@ -6,11 +6,20 @@ from apps.base.models import BaseModel
 from apps.carriers.models import Carrier
 
 
+# active: contracted and writing. applied: the paperwork is in. pending:
+# waiting on the carrier. inactive: no longer writing with the carrier.
+CONTRACT_STATUSES = (
+    ('active', 'Active'),
+    ('applied', 'Applied'),
+    ('pending', 'Pending'),
+    ('inactive', 'Inactive'),
+)
+
+
 class CarrierContract(BaseModel):
     """An appointment: one agent contracted with one carrier, in the states
-    listed, with the writing number (producer ID) the carrier assigned them.
-    Presence means contracted, absence means not: there is no status of its
-    own (whether the agent is active comes from the agent).
+    listed, with the writing number (producer ID) the carrier assigned them
+    and where the appointment stands (`status`).
 
     `appointed_states` must sit within both ceilings: the agent's licensed
     states and the carrier's available states (the API enforces it, naming
@@ -21,6 +30,7 @@ class CarrierContract(BaseModel):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='contracts')
     carrier = models.ForeignKey(Carrier, on_delete=models.CASCADE, related_name='contracts')
     writing_number = models.CharField(max_length=50, blank=True)
+    status = models.CharField(max_length=10, choices=CONTRACT_STATUSES, default='active')
     appointed_states = models.ManyToManyField(State, blank=True, related_name='contracts')
 
     class Meta(BaseModel.Meta):

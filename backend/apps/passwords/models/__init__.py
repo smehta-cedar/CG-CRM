@@ -1,4 +1,5 @@
 from .passwords import PASSWORD_STATUSES, Password
-from .notes import PasswordNote
+from .sites import Site, SitePassword
+from .notes import PasswordNote, SitePasswordNote
 
-__all__ = ['PASSWORD_STATUSES', 'Password', 'PasswordNote']
+__all__ = ['PASSWORD_STATUSES', 'Password', 'PasswordNote', 'Site', 'SitePassword', 'SitePasswordNote']

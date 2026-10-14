@@ -47,8 +47,9 @@ class Carrier(BaseModel):
     # Lines that need an agent certification. Always a subset of
     # lines_of_business, in the same order. Empty means none do.
     certification_lines = models.JSONField(default=list, blank=True)
-    # The carrier's site or agent portal. Blank when none.
-    link = models.URLField(max_length=500, blank=True)
+    # Named links, e.g. [{"name": "Portal", "url": "https://…"}]: like a dict,
+    # each name appears once. Kept in the order entered.
+    links = models.JSONField(default=list, blank=True)
     status = models.CharField(max_length=10, choices=CARRIER_STATUSES, default='active', db_index=True)
     # The carrier's footprint for the agency: one of the two ceilings on every
     # appointment with it (the other is the agent's own licences). Empty means

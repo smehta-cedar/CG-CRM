@@ -17,7 +17,7 @@ from apps.passwords.utils import (
     search_passwords,
     snapshot,
 )
-from apps.passwords.validators import ensure_one_party, ensure_pair_free, ensure_password_not_blank
+from apps.passwords.validators import ensure_credentials, ensure_one_party, ensure_pair_free
 
 from . import swagger
 from .serializers import (
@@ -75,16 +75,15 @@ def password_create(request):
     if agent is not None:
         ensure_carrier_accessible(data['carrier'])
     ensure_pair_free(data['carrier'], agent=agent, agency=agency)
-    ensure_password_not_blank(data['portal_password'])
+    ensure_credentials(data.get('status', 'active'), data.get('username', ''), data.get('portal_password', ''))
 
     with transaction.atomic():
         password = Password.objects.create(
             agent=agent,
             agency=agency,
             carrier=data['carrier'],
-            username=data['username'],
-            portal_password=data['portal_password'],
-            link=data.get('link', ''),
+            username=data.get('username', ''),
+            portal_password=data.get('portal_password', ''),
             status=data.get('status', 'active'),
             created_by=request.user,
             updated_by=request.user,
@@ -127,8 +126,12 @@ def password_detail(request, pk):
         if (agent, agency, carrier) != (password.agent, password.agency, password.carrier):
             ensure_pair_free(carrier, agent=agent, agency=agency, exclude=password)
 
-        if 'portal_password' in fields:
-            ensure_password_not_blank(fields['portal_password'])
+        # Checked against the values the password will end up with.
+        ensure_credentials(
+            fields.get('status', password.status),
+            fields.get('username', password.username),
+            fields.get('portal_password', password.portal_password),
+        )
 
         before = snapshot(password)
         with transaction.atomic():

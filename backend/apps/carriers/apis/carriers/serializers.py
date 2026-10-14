@@ -8,7 +8,7 @@ from apps.carriers.models import (
     CarrierNote,
     CarrierStateLicense,
 )
-from apps.carriers.utils import normalize_aliases, normalize_lines
+from apps.carriers.utils import normalize_aliases, normalize_lines, normalize_links
 from apps.contracts.utils import is_agent_accessible
 
 
@@ -56,7 +56,7 @@ class CarrierSerializer(serializers.ModelSerializer):
             'aliases',
             'lines_of_business',
             'certification_lines',
-            'link',
+            'links',
             'available_states',
             'licenses',
             'agent_accessible',
@@ -130,12 +130,30 @@ def _certification_lines_field():
     )
 
 
-def _link_field():
-    return serializers.URLField(
-        max_length=500,
+class LinkSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=100, help_text='What the link is, e.g. "Portal".')
+    url = serializers.URLField(max_length=2000)
+
+
+def validate_link_names(links):
+    """Normalised links; a blank or repeated name (ignoring case) is a 400."""
+    links = normalize_links(links)
+    seen = set()
+    for link in links:
+        key = link['name'].lower()
+        if not key:
+            raise serializers.ValidationError('Every link needs a name.')
+        if key in seen:
+            raise serializers.ValidationError(f'The link name "{link["name"]}" is used twice.')
+        seen.add(key)
+    return links
+
+
+def _links_field():
+    return serializers.ListField(
+        child=LinkSerializer(),
         required=False,
-        allow_blank=True,
-        help_text="The carrier's site or agent portal. Blank for none.",
+        help_text='Named links, in order; each name once. Replaces the current list.',
     )
 
 
@@ -180,12 +198,15 @@ class CarrierCreateSerializer(serializers.Serializer):
     aliases = _aliases_field()
     lines_of_business = _lines_field(required=True)
     certification_lines = _certification_lines_field()
-    link = _link_field()
+    links = _links_field()
     licenses = _licenses_field()
     status = _status_field()
 
     def validate_aliases(self, value):
         return normalize_aliases(value)
+
+    def validate_links(self, value):
+        return validate_link_names(value)
 
     def validate_lines_of_business(self, value):
         return normalize_lines(value)
@@ -201,12 +222,15 @@ class CarrierUpdateSerializer(serializers.Serializer):
     aliases = _aliases_field()
     lines_of_business = _lines_field(required=False)
     certification_lines = _certification_lines_field()
-    link = _link_field()
+    links = _links_field()
     licenses = _licenses_field()
     status = _status_field()
 
     def validate_aliases(self, value):
         return normalize_aliases(value)
+
+    def validate_links(self, value):
+        return validate_link_names(value)
 
     def validate_lines_of_business(self, value):
         return normalize_lines(value)

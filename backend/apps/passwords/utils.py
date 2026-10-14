@@ -1,13 +1,13 @@
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
-from apps.passwords.models import Password, PasswordNote
+from apps.passwords.models import Password, PasswordNote, Site, SitePassword, SitePasswordNote
 
 # Helpers the password views share. Checks that can reject a request live in
 # apps.passwords.validators instead.
 
 # The order a note lists changed fields in. "password" is recorded redacted.
-NOTE_FIELDS = ('agent', 'carrier', 'username', 'password', 'link', 'status')
+NOTE_FIELDS = ('agent', 'carrier', 'username', 'password', 'status')
 REDACTED_FIELDS = ('password',)
 
 
@@ -56,16 +56,15 @@ def snapshot(password):
         'carrier': password.carrier.name,
         'username': password.username,
         'password': password.portal_password,
-        'link': password.link,
         'status': password.status,
     }
 
 
-def diff_snapshots(before, after):
-    """Fields whose value differs, in NOTE_FIELDS order; redacted fields say
+def diff_snapshots(before, after, fields=NOTE_FIELDS):
+    """Fields whose value differs, in `fields` order; redacted fields say
     only that they changed. `before` is {} for a new password."""
     changes = []
-    for field in NOTE_FIELDS:
+    for field in fields:
         from_value = before.get(field, '')
         to_value = after.get(field, '')
         if from_value == to_value:
@@ -82,6 +81,67 @@ def record_note(password, actor, kind, changes):
     if not changes:
         return None
     return PasswordNote.objects.create(
+        password=password,
+        kind=kind,
+        changes=changes,
+        created_by=actor,
+        updated_by=actor,
+    )
+
+
+# --- sites and site passwords ----------------------------------------------
+
+# The order a site password note lists changed fields in.
+SITE_PASSWORD_NOTE_FIELDS = ('agent', 'site', 'username', 'password', 'status')
+
+
+def get_site_or_404(pk):
+    return get_object_or_404(Site, pk=pk)
+
+
+def get_site_password_or_404(pk):
+    return get_object_or_404(SitePassword.objects.select_related('agent', 'agency', 'site'), pk=pk)
+
+
+def search_site_passwords(passwords, search):
+    """Narrow `passwords` to those whose username, agent or agency name, or site name matches."""
+    return passwords.filter(
+        Q(username__icontains=search)
+        | Q(agent__name__icontains=search)
+        | Q(agency__name__icontains=search)
+        | Q(site__name__icontains=search)
+    )
+
+
+def filter_site_passwords(passwords, agent_id=None, agency_id=None, site_id=None, status=None):
+    """Narrow `passwords` by agent, agency, site and status; None means no filter."""
+    if agent_id is not None:
+        passwords = passwords.filter(agent_id=agent_id)
+    if agency_id is not None:
+        passwords = passwords.filter(agency_id=agency_id)
+    if site_id is not None:
+        passwords = passwords.filter(site_id=site_id)
+    if status:
+        passwords = passwords.filter(status=status)
+    return passwords
+
+
+def site_password_snapshot(password):
+    """Like snapshot(), with the site by name in place of the carrier."""
+    return {
+        'agent': password.party.name,
+        'site': password.site.name,
+        'username': password.username,
+        'password': password.portal_password,
+        'status': password.status,
+    }
+
+
+def record_site_password_note(password, actor, kind, changes):
+    """Append a site password change note. Nothing is written when there are no changes."""
+    if not changes:
+        return None
+    return SitePasswordNote.objects.create(
         password=password,
         kind=kind,
         changes=changes,

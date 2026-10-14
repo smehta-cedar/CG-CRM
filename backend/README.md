@@ -75,6 +75,13 @@ All under `/api/v1/`. Everything except `auth/login/` requires
 | POST | `passwords/create/` | `passwords` create |
 | GET, PATCH, DELETE | `passwords/{id}/` | `passwords` view · update · delete |
 | GET | `passwords/{id}/notes/` | `passwords` view |
+| GET | `sites/` | `passwords` view |
+| POST | `sites/create/` | `passwords` create |
+| GET, PATCH, DELETE | `sites/{id}/` | `passwords` view · update · delete |
+| GET | `site-passwords/` | `passwords` view |
+| POST | `site-passwords/create/` | `passwords` create |
+| GET, PATCH, DELETE | `site-passwords/{id}/` | `passwords` view · update · delete |
+| GET | `site-passwords/{id}/notes/` | `passwords` view |
 | GET | `contracts/` | `contracts` view |
 | POST | `contracts/create/` | `contracts` create |
 | GET, PATCH, DELETE | `contracts/{id}/` | `contracts` view · update · delete |
@@ -112,7 +119,8 @@ All under `/api/v1/`. Everything except `auth/login/` requires
 `?is_active=` (true only for status `active`, i.e. in force) and `?state=`
 (two-letter code), plus `?page=` / `?page_size=`; rows come back by name. A
 carrier's `status` is `active`, `applied`, `pending`, `expired` or `inactive`
-and `link` an optional URL. Its states are `licenses`, rows like an agent's
+and `links` a list of named URLs (`[{"name", "url"}]`, each name once,
+ignoring case; an update that sends it replaces the list). Its states are `licenses`, rows like an agent's
 licences (`state`, `license_number`, `status`, `start_date`, `end_date` as
 the expiration, `life`, `health`); a create or update that sends `licenses`
 replaces the set, and `available_states` (read-only, state codes in code
@@ -129,8 +137,10 @@ python manage.py seed_carriers            # frontend/data/carriers.json
 python manage.py seed_carriers --file path/to/carriers.json
 ```
 
-`GET /agents/` takes `?search=` (name, alias, NPN, email, phone), `?is_active=`
-and `?state=` (licensed there), plus paging; rows come back by name. An agent
+`GET /agents/` takes `?search=` (name, alias, NPN, email, phone), `?is_active=`,
+`?status=` and `?state=` (licensed there), plus paging; rows come back by name.
+An agent's `status` is active, onboarding, sdr or inactive; `is_active` follows
+it (false only for inactive), so onboarding and SDR agents can sign in. An agent
 carries `address` (all four parts or `null`) and `licenses`, its state licence
 rows (`state`, `license_number`, `status` of active / review / pending / jit,
 `start_date`, `end_date`). On create and update, `licenses` is the full set
@@ -188,6 +198,23 @@ agent name then carrier name and carry `agent` and `carrier` summaries. The
 portal password is returned as stored; its change notes only ever say it was
 set or changed (`"redacted": true`).
 
+Logins that aren't at a carrier are **site passwords**, in the same app and
+under the same `passwords` permission. `GET /sites/` lists sites (a `name`,
+unique among live sites whatever its case, an optional `link` URL, and
+`password_count`), by name; `DELETE /sites/{id}/` is refused (400, under `site`) while live
+site passwords use the site. `GET /site-passwords/` takes `?search=`
+(username, agent or agency name, site name), `?agent_id=`, `?agency_id=`,
+`?site_id=` and `?status=`; rows carry an `agent` or `agency` summary and a
+`site` summary (with its link), by agent name then site name. One live site password per
+agent + site and per agency + site (errors under `site_id`); there is no
+contract-number rule. Migration `passwords.0008` undid `0007` (which had
+briefly turned every password's carrier into free-text `site`): a site
+naming a carrier got that carrier back, any other became a site password.
+
+For both kinds, `username` and `portal_password` may be blank only while
+`status` is `pending`; otherwise a blank one is a 400 under that field. A
+PATCH is checked against the values the password ends up with.
+
 `GET /contracts/` (appointments: one agent contracted with one carrier)
 takes `?search=` (agent name, carrier name, writing number), `?agent_id=`,
 `?carrier_id=` and `?state=`, plus paging; rows come back by agent name then
@@ -218,8 +245,9 @@ contracts refer to agents and carriers):
 python manage.py seed_carriers
 python manage.py seed_agents              # agents.json + agent-state-licenses.json
 python manage.py seed_passwords           # passwords.json, matched by NPN and carrier name
+python manage.py seed_site_passwords      # site-passwords.json; creates the sites it names
 python manage.py seed_contracts           # carrier-contracts.json, same matching
-python manage.py seed_users               # users.json + the Admin / Staff roles; local dev only
+python manage.py seed_users               # users.json + default permissions on empty built-in roles; local dev only
 python manage.py seed_agency              # agency.json + agency-state-licenses.json
 python manage.py seed_storefront          # the Cedar Grove tee
 python manage.py seed_requests            # requests.json + merch-requests.json, and the shop account
@@ -259,9 +287,18 @@ are given, and a kept row keeps whatever is left out or null. The change
 note lists `license_statuses` and `license_dates` alongside the states and
 numbers. `agencies/{id}/notes/` lists its change notes.
 
+Three roles are built in: Admin, Operations and Agent. A migration creates
+them (an old Staff role becomes Operations, users and all), and the API
+refuses to delete, rename or switch them off; their description and
+permissions are edited on the Roles page like any other role. Every agent
+sign-in takes its permissions from Agent.
+
 `seed_users` sets passwords exactly as the file holds them, skipping the
-strength validators, and gives Admin every action on every module and Staff
-view on every module. It never touches a superuser.
+strength validators. A built-in role with no permissions yet gets defaults:
+Admin every action on every module, Operations view on every module, Agent
+view on its own sections plus create on My requests. A role that already has
+permissions is left as set. `"staff"` in users.json means Operations. It
+never touches a superuser.
 
 `GET /permissions/` returns the catalog grouped `Module → Resource → Actions`
 for the checkbox tree. `GET /users/me/` returns the signed-in account with its

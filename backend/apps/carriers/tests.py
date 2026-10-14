@@ -60,7 +60,7 @@ class CarrierCreateTests(CarrierAPITestCase):
         self.assertEqual(data['lines_of_business'], ['MAPD'])
         # States come back in code order whatever order they were sent in.
         self.assertEqual(data['available_states'], ['FL', 'LA', 'TX'])
-        self.assertEqual(data['link'], '')
+        self.assertEqual(data['links'], [])
         self.assertEqual(data['status'], 'active')
         self.assertTrue(data['is_active'])
         carrier = Carrier.objects.get(pk=data['id'])
@@ -306,18 +306,44 @@ class CarrierDetailTests(CarrierAPITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('status', response.data['errors'])
 
-    def test_patch_sets_and_clears_link(self):
+    def test_patch_sets_and_clears_links(self):
         carrier = make_carrier()
-        response = self.client.patch(self.detail_url(carrier), {'link': 'https://www.humana.com'}, format='json')
+        links = [
+            {'name': ' Agent  portal ', 'url': 'https://agent.humana.com'},
+            {'name': 'Website', 'url': 'https://www.humana.com'},
+        ]
+        response = self.client.patch(self.detail_url(carrier), {'links': links}, format='json')
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data['data']['link'], 'https://www.humana.com')
+        self.assertEqual(
+            response.data['data']['links'],
+            [
+                {'name': 'Agent portal', 'url': 'https://agent.humana.com'},
+                {'name': 'Website', 'url': 'https://www.humana.com'},
+            ],
+        )
         self.assertEqual(
             carrier.notes.get().changes,
-            [{'field': 'link', 'from': '', 'to': 'https://www.humana.com'}],
+            [
+                {
+                    'field': 'links',
+                    'from': '',
+                    'to': 'Agent portal https://agent.humana.com, Website https://www.humana.com',
+                }
+            ],
         )
-        response = self.client.patch(self.detail_url(carrier), {'link': ''}, format='json')
+        response = self.client.patch(self.detail_url(carrier), {'links': []}, format='json')
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data['data']['link'], '')
+        self.assertEqual(response.data['data']['links'], [])
+
+    def test_patch_rejects_repeated_link_name(self):
+        carrier = make_carrier()
+        links = [
+            {'name': 'Portal', 'url': 'https://a.example.com'},
+            {'name': 'portal', 'url': 'https://b.example.com'},
+        ]
+        response = self.client.patch(self.detail_url(carrier), {'links': links}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('links', response.data['errors'])
 
     def test_dropping_a_line_drops_its_certification(self):
         carrier = make_carrier(lines_of_business=['MAPD', 'Life'], certification_lines=['MAPD', 'Life'])
@@ -327,11 +353,13 @@ class CarrierDetailTests(CarrierAPITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data['data']['certification_lines'], ['MAPD'])
 
-    def test_patch_rejects_bad_link(self):
+    def test_patch_rejects_bad_link_url(self):
         carrier = make_carrier()
-        response = self.client.patch(self.detail_url(carrier), {'link': 'not a url'}, format='json')
+        response = self.client.patch(
+            self.detail_url(carrier), {'links': [{'name': 'Portal', 'url': 'not a url'}]}, format='json'
+        )
         self.assertEqual(response.status_code, 400)
-        self.assertIn('link', response.data['errors'])
+        self.assertIn('links', response.data['errors'])
 
     def test_patch_keeps_own_name(self):
         carrier = make_carrier()

@@ -19,6 +19,7 @@ NOTE_FIELDS = (
     'phone',
     'licensed_states',
     'license_numbers',
+    'license_lines',
     'license_statuses',
     'license_dates',
 )
@@ -91,26 +92,27 @@ def live_licenses(agency):
 
 def sync_licenses(agency, actor, wanted, today=None):
     """Make the agency's licence rows match `wanted`, a list of
-    (State, number, status, start_date, end_date).
+    (State, number, life, health, status, start_date, end_date).
 
-    A state already licensed keeps its row, with the number as given and the
-    status and dates as given (a None status or date leaves the row's
-    alone); a state no longer listed loses its row (soft delete); a new
-    state gets a row with the status given (active when None) and the dates
-    given, or starting today and running LICENSE_TERM_YEARS when they are
-    None.
+    A state already licensed keeps its row, with the number and lines as
+    given and the status and dates as given (a None status or date leaves
+    the row's alone); a state no longer listed loses its row (soft delete);
+    a new state gets a row with the status given (active when None) and the
+    dates given, or starting today and running LICENSE_TERM_YEARS when they
+    are None.
     """
     today = today or date.today()
     wanted_by_state = {
-        state.pk: (state, number.strip(), status, start, end) for state, number, status, start, end in wanted
+        state.pk: (state, number.strip(), bool(life), bool(health), status, start, end)
+        for state, number, life, health, status, start, end in wanted
     }
 
     for row in list(agency.licenses.all()):
         if row.state_id not in wanted_by_state:
             row.delete(user=actor)
             continue
-        _, number, status, start, end = wanted_by_state.pop(row.state_id)
-        updates = {'license_number': number}
+        _, number, life, health, status, start, end = wanted_by_state.pop(row.state_id)
+        updates = {'license_number': number, 'life': life, 'health': health}
         if status is not None:
             updates['status'] = status
         if start is not None:
@@ -124,13 +126,15 @@ def sync_licenses(agency, actor, wanted, today=None):
             row.updated_by = actor
             row.save(update_fields=[*changed, 'updated_by'])
 
-    for state, number, status, start, end in wanted_by_state.values():
+    for state, number, life, health, status, start, end in wanted_by_state.values():
         start = start or today
         end = end or start.replace(year=start.year + LICENSE_TERM_YEARS)
         AgencyStateLicense.objects.create(
             agency=agency,
             state=state,
             license_number=number,
+            life=life,
+            health=health,
             status=status or 'active',
             start_date=start,
             end_date=end,
@@ -153,6 +157,10 @@ def snapshot(agency):
         'licensed_states': ', '.join(row.state.code for row in licenses),
         'license_numbers': ', '.join(
             f'{row.state.code} {row.license_number}' for row in licenses if row.license_number
+        ),
+        # "TX Life & Health, FL Health": only the rows with a line ticked.
+        'license_lines': ', '.join(
+            f'{row.state.code} {row.lines_text}' for row in licenses if row.lines_text
         ),
         # "FL active, TX pending": every row.
         'license_statuses': ', '.join(f'{row.state.code} {row.status}' for row in licenses),

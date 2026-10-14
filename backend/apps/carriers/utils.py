@@ -12,7 +12,7 @@ NOTE_FIELDS = (
     'aliases',
     'lines_of_business',
     'certification_lines',
-    'link',
+    'links',
     'available_states',
     'license_numbers',
     'license_statuses',
@@ -42,6 +42,12 @@ def normalize_aliases(aliases):
             seen.add(key)
             result.append(alias)
     return result
+
+
+def normalize_links(links):
+    """Each link as {"name", "url"} with the name's spaces collapsed, in the
+    order given. Names are compared case-insensitively by the serializer."""
+    return [{'name': ' '.join(link['name'].split()), 'url': link['url'].strip()} for link in links]
 
 
 def normalize_lines(lines):
@@ -129,7 +135,8 @@ def snapshot(carrier):
         'aliases': ', '.join(carrier.aliases),
         'lines_of_business': ', '.join(carrier.lines_of_business),
         'certification_lines': ', '.join(carrier.certification_lines),
-        'link': carrier.link,
+        # "Portal https://…, Site https://…"
+        'links': ', '.join(f"{link['name']} {link['url']}" for link in carrier.links),
         'available_states': ', '.join(carrier.state_codes),
         'license_numbers': ', '.join(
             f'{row.state.code} {row.license_number}' for row in licenses if row.license_number

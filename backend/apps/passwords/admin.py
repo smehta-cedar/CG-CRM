@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Password, PasswordNote
+from .models import Password, PasswordNote, Site, SitePassword, SitePasswordNote
 
 AUDIT_FIELDS = ('created_at', 'updated_at', 'created_by', 'updated_by', 'deleted_at', 'deleted_by')
 
@@ -31,3 +31,24 @@ class PasswordNoteAdmin(admin.ModelAdmin):
     list_filter = ('kind',)
     search_fields = ('password__agent__name', 'password__agency__name', 'password__carrier__name')
     readonly_fields = ('password', 'kind', 'changes', *AUDIT_FIELDS)
+
+
+@admin.register(Site)
+class SiteAdmin(admin.ModelAdmin):
+    list_display = ('name', 'created_at')
+    search_fields = ('name',)
+    readonly_fields = AUDIT_FIELDS
+
+
+class SitePasswordNoteInline(PasswordNoteInline):
+    model = SitePasswordNote
+
+
+@admin.register(SitePassword)
+class SitePasswordAdmin(admin.ModelAdmin):
+    list_display = ('agent', 'agency', 'site', 'username', 'status', 'created_at')
+    list_filter = ('status', 'site')
+    search_fields = ('agent__name', 'agency__name', 'site__name', 'username')
+    autocomplete_fields = ('agent', 'site')
+    readonly_fields = AUDIT_FIELDS
+    inlines = (SitePasswordNoteInline,)

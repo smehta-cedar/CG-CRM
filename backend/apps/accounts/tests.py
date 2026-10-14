@@ -108,14 +108,16 @@ class UserNotesTests(APITestCase):
         self.assertFalse(user.notes.exists())
 
     def test_roles_list(self):
-        Role.objects.create(name='Admin')
         Role.objects.create(name='Old', is_active=False)
         response = self.client.get(reverse('accounts:apis:roles:list'))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([role['name'] for role in response.data['data']], ['Admin', 'Old', 'Staff'])
+        # Admin, Agent and Operations are built in.
+        self.assertEqual(
+            [role['name'] for role in response.data['data']], ['Admin', 'Agent', 'Old', 'Operations', 'Staff']
+        )
         # The Users form asks for the active ones only.
         response = self.client.get(reverse('accounts:apis:roles:list'), {'is_active': 'true'})
-        self.assertEqual([role['name'] for role in response.data['data']], ['Admin', 'Staff'])
+        self.assertEqual([role['name'] for role in response.data['data']], ['Admin', 'Agent', 'Operations', 'Staff'])
 
 
 class UserManagerLimitsTests(APITestCase):
@@ -128,7 +130,7 @@ class UserManagerLimitsTests(APITestCase):
         )
         self.manager = User.objects.create_user(email='hr@example.com', password='Str0ng-pass-word!', full_name='HR')
         self.manager.roles.add(manage)
-        self.admin_role = Role.objects.create(name='Admin')
+        self.admin_role = Role.objects.get(name='Admin')  # built in
         self.client.force_authenticate(self.manager)
 
     def url(self, name, *args):
@@ -277,6 +279,46 @@ class RolesApiTests(APITestCase):
         response = self.client.delete(self.url('detail', role.pk))
         self.assertEqual(response.status_code, 200, response.data)
         self.assertFalse(Role.objects.filter(pk=role.pk).exists())
+
+    def test_built_in_roles_cannot_be_deleted_renamed_or_switched_off(self):
+        for name in ('Admin', 'Operations', 'Agent'):
+            role = Role.objects.get(name=name)
+            self.assertTrue(self.client.get(self.url('detail', role.pk)).data['data']['is_system'])
+            response = self.client.delete(self.url('detail', role.pk))
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('built-in', response.data['message'])
+            response = self.client.patch(self.url('detail', role.pk), {'name': f'{name} 2'}, format='json')
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('name', response.data['errors'])
+            response = self.client.patch(self.url('detail', role.pk), {'is_active': False}, format='json')
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('is_active', response.data['errors'])
+            self.assertTrue(Role.objects.filter(pk=role.pk, name=name, is_active=True).exists())
+
+    def test_built_in_roles_stay_editable(self):
+        role = Role.objects.get(name='Agent')
+        response = self.client.patch(
+            self.url('detail', role.pk),
+            {
+                'name': 'agent',
+                'is_active': True,
+                'description': 'Every agent sign-in.',
+                'permissions': [{'module': 'agent_view.profile', 'can_view': True}],
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        role.refresh_from_db()
+        # The built-in spelling is kept.
+        self.assertEqual(role.name, 'Agent')
+        self.assertEqual(role.description, 'Every agent sign-in.')
+        flags = {row['module']: row for row in response.data['data']['permissions']}
+        self.assertTrue(flags['agent_view.profile']['can_view'])
+        self.assertFalse(flags['agent_view.licenses']['can_view'])
+
+    def test_custom_role_is_not_built_in(self):
+        response = self.client.post(self.url('create'), {'name': 'Ops Lead'}, format='json')
+        self.assertFalse(response.data['data']['is_system'])
 
     def test_non_superuser_can_read_but_not_change(self):
         staff = self.make_staff()

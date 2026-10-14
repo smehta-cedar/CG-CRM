@@ -12,7 +12,7 @@ from apps.contracts.models import (
 # apps.contracts.validators instead.
 
 # The order a note lists changed fields in.
-NOTE_FIELDS = ('agent', 'carrier', 'writing_number', 'appointed_states')
+NOTE_FIELDS = ('agent', 'carrier', 'writing_number', 'status', 'appointed_states')
 
 
 def get_contract_or_404(pk):
@@ -61,6 +61,7 @@ def snapshot(contract):
         'agent': contract.agent.name,
         'carrier': contract.carrier.name,
         'writing_number': contract.writing_number,
+        'status': contract.status,
         'appointed_states': ', '.join(contract.state_codes),
     }
 

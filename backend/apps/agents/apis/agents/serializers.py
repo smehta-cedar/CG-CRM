@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.agents.models import LICENSE_STATUSES, Agent, AgentNote, AgentStateLicense
+from apps.agents.models import AGENT_STATUSES, LICENSE_STATUSES, Agent, AgentNote, AgentStateLicense
 from apps.agents.utils import normalize_aliases
 
 
@@ -19,7 +19,7 @@ class AgentLicenseSerializer(serializers.ModelSerializer):
     """One licence row as it appears on an agent."""
 
     state = serializers.CharField(source='state.code', read_only=True)
-    status = serializers.ChoiceField(choices=LICENSE_STATUSES, read_only=True)
+    status = serializers.ChoiceField(choices=LICENSE_STATUSES, source='current_status', read_only=True)
 
     class Meta:
         model = AgentStateLicense
@@ -39,6 +39,8 @@ class AgentSerializer(serializers.ModelSerializer):
         fields = (
             'id',
             'name',
+            'first_name',
+            'last_name',
             'aliases',
             'npn',
             'email',
@@ -50,7 +52,9 @@ class AgentSerializer(serializers.ModelSerializer):
             'join_date',
             'start_date',
             'ssn_last4',
+            'remarks',
             'licenses',
+            'status',
             'is_active',
             'created_at',
             'updated_at',
@@ -97,6 +101,13 @@ class LicenseInputSerializer(serializers.Serializer):
     license_number = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
     life = serializers.BooleanField(required=False, default=False, help_text='Covers life insurance.')
     health = serializers.BooleanField(required=False, default=False, help_text='Covers health insurance.')
+    status = serializers.ChoiceField(
+        choices=LICENSE_STATUSES,
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text='Left out: active for a new row, unchanged for a kept one.',
+    )
     start_date = serializers.DateField(
         required=False,
         allow_null=True,
@@ -143,7 +154,13 @@ def _licenses_field():
     )
 
 
+def _name_part_field(help_text):
+    return serializers.CharField(max_length=100, required=False, allow_blank=True, help_text=help_text)
+
+
 class _AgentWriteSerializer(serializers.Serializer):
+    first_name = _name_part_field('With last_name, builds `name`. Includes any middle name.')
+    last_name = _name_part_field('With first_name, builds `name`.')
     aliases = _aliases_field()
     email = serializers.EmailField(required=False, allow_blank=True)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
@@ -160,20 +177,34 @@ class _AgentWriteSerializer(serializers.Serializer):
         help_text='The last four digits of the SSN only.',
         error_messages={'invalid': 'Enter only the last 4 digits of the SSN.'},
     )
+    remarks = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True, help_text='Free-text notes.')
     licenses = _licenses_field()
-    is_active = serializers.BooleanField(required=False)
+    status = serializers.ChoiceField(choices=AGENT_STATUSES, required=False)
+    is_active = serializers.BooleanField(
+        required=False,
+        help_text='Ignored when status is sent. false sets status to inactive; true sets it to active if it was inactive.',
+    )
 
     def validate_aliases(self, value):
         return normalize_aliases(value)
 
 
 class AgentCreateSerializer(_AgentWriteSerializer):
-    name = serializers.CharField(max_length=255)
+    """Send first_name (and last_name), or a full `name` to split."""
+
+    name = serializers.CharField(max_length=255, required=False)
     npn = _npn_field(required=True)
+
+    def validate(self, data):
+        data = super().validate(data)
+        if not (data.get('first_name', '').strip() or data.get('name', '').strip()):
+            raise serializers.ValidationError({'first_name': ['Enter the first name.']})
+        return data
 
 
 class AgentUpdateSerializer(_AgentWriteSerializer):
-    """Send only the fields that change."""
+    """Send only the fields that change. A name part sent rebuilds `name`; a
+    `name` sent without parts is split into them."""
 
     name = serializers.CharField(max_length=255, required=False)
     npn = _npn_field(required=False)
@@ -189,6 +220,11 @@ class AgentListQuerySerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         help_text='true for active agents, false for inactive ones.',
+    )
+    status = serializers.ChoiceField(
+        choices=AGENT_STATUSES,
+        required=False,
+        help_text='Only agents with this status.',
     )
     state = serializers.CharField(
         required=False,

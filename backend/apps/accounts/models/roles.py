@@ -99,6 +99,14 @@ ACTIONS = ('view', 'create', 'update', 'delete')
 # there: every agent account takes its permissions from the role with this
 # name (case-insensitive). No such role means an agent sees nothing.
 AGENT_ROLE_NAME = 'Agent'
+ADMIN_ROLE_NAME = 'Admin'
+OPERATIONS_ROLE_NAME = 'Operations'
+
+# Built-in roles: a migration creates them, and they cannot be deleted,
+# renamed or switched off. Their description and permissions stay editable.
+# Code finds Agent (above) and Admin (request notifications) by name, which
+# is why the names are locked.
+SYSTEM_ROLE_NAMES = (ADMIN_ROLE_NAME, OPERATIONS_ROLE_NAME, AGENT_ROLE_NAME)
 
 
 def _build_permission_labels():
@@ -146,6 +154,10 @@ class Role(BaseModel):
 
     def __str__(self):
         return self.name
+
+    @property
+    def is_system(self):
+        return self.name.lower() in {name.lower() for name in SYSTEM_ROLE_NAMES}
 
 
 class RolePermission(BaseModel):
