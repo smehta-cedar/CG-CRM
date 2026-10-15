@@ -60,6 +60,10 @@ MODULES = {
         'label': 'Calendar',
         'children': {},
     },
+    'tasks': {
+        'label': 'Tasks',
+        'children': {},
+    },
     'storefront': {
         'label': 'Storefront',
         'children': {

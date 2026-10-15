@@ -1,4 +1,5 @@
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Role, RolePermission, User
@@ -6,7 +7,7 @@ from apps.agents.models import Agent
 from apps.carriers.models import Carrier
 from apps.storefront.models import Product
 
-from .models import Request
+from .models import Request, Task
 
 
 def make_role(**flags):
@@ -199,3 +200,61 @@ class AgentOwnRequestTests(RequestAPITestCase):
         self.assertEqual(data['buyer_name'], 'Maria Alva')
         self.assertEqual(data['email'], 'maria@example.com')
         self.assertEqual(data['address'], '1420 Cedar Grove Ln, Austin, TX 78704')
+
+
+class TaskTests(RequestAPITestCase):
+    def task_url(self, name, *args):
+        return reverse(f'requests:apis:tasks:{name}', args=args)
+
+    def test_adds_a_task(self):
+        response = self.client.post(self.task_url('create'), {'title': 'Just a title'}, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual((response.data['data']['type'], response.data['data']['agent']), ('', None))
+        body = {'title': ' Call Humana ', 'type': 'contract', 'agent_id': str(self.agent.pk), 'state': 'tx'}
+        response = self.client.post(self.task_url('create'), {**body, 'carrier_id': str(self.carrier.pk)}, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        data = response.data['data']
+        self.assertEqual((data['title'], data['status'], data['state']), ('Call Humana', 'open', 'TX'))
+        self.assertEqual(data['priority'], 'general')
+        self.assertEqual(data['created_on'], timezone.localdate().isoformat())
+        self.assertIsNone(data['due_date'])
+        dated = {**body, 'carrier_id': str(self.carrier.pk), 'created_on': '2026-10-15', 'due_date': '2026-10-14'}
+        response = self.client.post(self.task_url('create'), dated, format='json')
+        self.assertIn('due_date', response.data['errors'])
+        response = self.client.post(self.task_url('create'), {**dated, 'due_date': '2026-10-20'}, format='json')
+        self.assertEqual(response.data['data']['due_date'], '2026-10-20')
+        response = self.client.post(self.task_url('create'), {**body, 'title': ''}, format='json')
+        self.assertIn('title', response.data['errors'])
+
+    def test_list_mark_done_and_delete(self):
+        task = Task.objects.create(title='Renew', type='licensing', agent=self.agent)
+        self.assertEqual(len(self.client.get(self.task_url('list')).data['data']), 1)
+        response = self.client.patch(self.task_url('detail', task.pk), {'status': 'done'}, format='json')
+        self.assertEqual(response.data['data']['status'], 'done')
+        response = self.client.patch(self.task_url('detail', task.pk), {'priority': 'future'}, format='json')
+        self.assertEqual(response.data['data']['priority'], 'future')
+        self.assertEqual(self.client.patch(self.task_url('detail', task.pk), {'priority': 'soon'}, format='json').status_code, 400)
+        edit = {'title': 'Renew TX', 'type': 'day_off', 'start_date': '2026-11-02', 'end_date': '2026-11-01'}
+        response = self.client.patch(self.task_url('detail', task.pk), edit, format='json')
+        self.assertIn('end_date', response.data['errors'])
+        response = self.client.patch(self.task_url('detail', task.pk), {**edit, 'end_date': '2026-11-03', 'agent_id': None}, format='json')
+        data = response.data['data']
+        self.assertEqual((data['title'], data['type'], data['end_date'], data['agent']), ('Renew TX', 'day_off', '2026-11-03', None))
+        response = self.client.patch(self.task_url('detail', task.pk), {'type': 'licensing'}, format='json')
+        self.assertIsNone(response.data['data']['start_date'])
+        self.assertEqual(self.client.patch(self.task_url('detail', task.pk), {'title': ''}, format='json').status_code, 400)
+        self.assertEqual(self.client.get(self.task_url('list'), {'status': 'open'}).data['data'], [])
+        self.assertEqual(self.client.delete(self.task_url('detail', task.pk)).status_code, 200)
+        self.assertTrue(Task.all_objects.filter(pk=task.pk).exists())
+
+    def test_needs_the_tasks_permission(self):
+        user = User.objects.create_user(email='u@example.com', password='x', full_name='U')
+        user.roles.set([make_role(can_view=True, can_create=True)])
+        self.client.force_authenticate(user)
+        self.assertEqual(self.client.get(self.task_url('list')).status_code, 403)
+        role = Role.objects.create(name='Tasks')
+        RolePermission.objects.create(role=role, module='tasks', can_view=True)
+        user.roles.set([role])
+        # A fresh copy: the user caches its permissions.
+        self.client.force_authenticate(User.objects.get(pk=user.pk))
+        self.assertEqual(self.client.get(self.task_url('list')).status_code, 200)

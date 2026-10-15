@@ -4,4 +4,5 @@ app_name = 'apis'
 
 urlpatterns = [
     path('requests/', include('apps.requests.apis.requests.urls')),
+    path('tasks/', include('apps.requests.apis.tasks.urls')),
 ]
