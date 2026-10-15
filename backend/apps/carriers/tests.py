@@ -28,7 +28,7 @@ def make_carrier(available_states=('FL', 'TX', 'LA'), **overrides):
 
 def make_role(**flags):
     role = Role.objects.create(name=f"carriers-{'-'.join(k for k, v in flags.items() if v) or 'none'}")
-    RolePermission.objects.create(role=role, module='carriers', **flags)
+    RolePermission.objects.create(role=role, module='carriers.list', **flags)
     return role
 
 

@@ -284,3 +284,22 @@ def record_note(agent, actor, kind, changes):
         created_by=actor,
         updated_by=actor,
     )
+
+
+def add_pending_license(agent, state, actor=None):
+    """Give `agent` a pending licence in `state`, with no number or dates
+    to fill in once the state issues it, and an "edited" note. Called when
+    the agency licences a state for its agents. Does nothing when the agent
+    already has a live row there. Returns the new row, or None."""
+    if agent.licenses.filter(state=state).exists():
+        return None
+    before = snapshot(get_agent_or_404(agent.pk))
+    row = AgentStateLicense.objects.create(
+        agent=agent,
+        state=state,
+        status='pending',
+        created_by=actor,
+        updated_by=actor,
+    )
+    record_note(agent, actor, AgentNote.KIND_EDITED, diff_snapshots(before, snapshot(get_agent_or_404(agent.pk))))
+    return row

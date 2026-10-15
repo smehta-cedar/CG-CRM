@@ -70,10 +70,6 @@ class NotifyOnRequestTests(NotificationTestCase):
             reverse('requests:apis:requests:merch'),
             {
                 'product_id': str(product.pk),
-                'buyer_name': 'Shop Check',
-                'email': 'buyer@example.com',
-                'phone': '(555)010-9999',
-                'address': '1 Main St',
                 'size': 'M',
                 'color': 'teal',
                 'quantity': 1,
@@ -85,7 +81,8 @@ class NotifyOnRequestTests(NotificationTestCase):
         self.assertEqual(recipients, {'admin@example.com', 'boss@example.com'})
         notification = Notification.objects.get(recipient=self.admin)
         self.assertEqual(notification.title, 'Sam Staff filed a merch request')
-        self.assertEqual(notification.body, 'Shop Check · Tee (1 × M)')
+        # Buyer name comes from the signed-in filer's profile.
+        self.assertEqual(notification.body, 'Sam Staff · Tee (1 × M)')
         self.assertEqual(notification.link, '/hr')
 
     def test_decision_notifies_the_linked_agent(self):

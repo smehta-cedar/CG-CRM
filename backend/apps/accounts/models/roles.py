@@ -4,11 +4,13 @@ from django.db.models.functions import Lower
 
 from apps.base.models import BaseModel
 
-# Every screen a role can be granted. Top-level keys are menu sections: a
-# section with children is granted per child, one without is granted whole.
+# Every sidebar link a role can be granted, in sidebar order. Top-level keys
+# are sidebar sections: a section with children is granted per sub-link, one
+# without is granted whole.
 #
 # Permission codes are "section" or "section.child" (e.g. "dashboard",
-# "finance.invoices"), so the same child key can sit under two sections.
+# "agents.profile"). An API shared by a section's sub-links checks the
+# section code, which any of its sub-links grants (User.has_permission).
 #
 #     'finance': {
 #         'label': 'Finance',
@@ -22,40 +24,26 @@ from apps.base.models import BaseModel
 # removing one orphans the rows that hold the old code.
 MODULES = {
     'dashboard': {
-        'label': 'Dashboard Overview',
-        'children': {},
-    },
-    'users': {
-        'label': 'Users',
-        'children': {},
-    },
-    'agencies': {
-        'label': 'Agencies',
-        'children': {},
-    },
-    'carriers': {
-        'label': 'Carriers',
+        'label': 'Overview',
         'children': {},
     },
     'agents': {
         'label': 'Agents',
-        'children': {},
-    },
-    # What an agent signed in as themselves sees of their own record
-    # (GET /auth/agent/). Granted per section, so a role can show an agent
-    # their licences but not their portal passwords. Only ever scoped to the
-    # signed-in agent's own record, and the only codes an agent's account
-    # can hold (User.has_permission).
-    'agent_view': {
-        'label': 'Agent view',
         'children': {
-            'profile': 'My details',
-            'licenses': 'My licences',
-            'contracts': 'My carriers',
-            'certifications': 'My certifications',
-            'passwords': 'My passwords',
-            'requests': 'My requests',
+            'list': 'Agent list',
+            'profile': 'Agent profile',
         },
+    },
+    'carriers': {
+        'label': 'Carriers',
+        'children': {
+            'list': 'Carrier list',
+            'profile': 'Carrier profile',
+        },
+    },
+    'rulebook': {
+        'label': 'Rulebook',
+        'children': {},
     },
     'passwords': {
         'label': 'Passwords',
@@ -63,35 +51,35 @@ MODULES = {
     },
     'contracts': {
         'label': 'Contracts',
-        'children': {},
+        'children': {
+            'by_state': 'By state',
+            'by_carriers': 'By carriers',
+        },
     },
     'requests': {
-        'label': 'Requests',
+        'label': 'Calendar',
         'children': {},
     },
     'storefront': {
         'label': 'Storefront',
+        'children': {
+            'products': 'Products',
+            'shop': 'Shop',
+        },
+    },
+    'users': {
+        'label': 'Users',
         'children': {},
     },
-    # The catalog of policy kinds (apps.policies). Carrier policies point at
-    # it; availability and agency contracts will too.
-    'policy_types': {
-        'label': 'Policy types',
-        'children': {},
-    },
-    # An agent's yearly certification with a carrier for one line of
-    # business (apps.policies).
-    'certifications': {
-        'label': 'Certifications',
-        'children': {},
-    },
-    # The agency's own contract with a carrier (apps.contracts). Shown on the
-    # agency profile; a carrier is open to agents once it has a number.
-    'agency_contracts': {
-        'label': 'Agency contracts',
+    'agencies': {
+        'label': 'Agency',
         'children': {},
     },
 }
+
+# Sections granted per sub-link; checking one of these codes asks whether any
+# of its sub-links allows the action.
+SECTIONS = frozenset(section for section, spec in MODULES.items() if spec['children'])
 
 ACTIONS = ('view', 'create', 'update', 'delete')
 

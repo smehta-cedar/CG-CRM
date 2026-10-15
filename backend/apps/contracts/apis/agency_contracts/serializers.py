@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from apps.agency.models import Agency
-from apps.contracts.models import AgencyCarrierContract, AgencyCarrierContractNote
+from apps.contracts.models import AGENCY_CONTRACT_STATUSES, AgencyCarrierContract, AgencyCarrierContractNote
 # One schema component for the carrier's {id, name, is_active} summary.
 from apps.passwords.apis.passwords.serializers import CarrierSummarySerializer
 from apps.policies.models import PolicyType
@@ -34,7 +34,7 @@ class AgencyContractSerializer(serializers.ModelSerializer):
             'carrier',
             'contract_number',
             'policy_types',
-            'is_active',
+            'status',
             'created_at',
             'updated_at',
         )
@@ -83,12 +83,29 @@ def _policy_types_field():
     )
 
 
+def _agents_field():
+    return serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        help_text=(
+            'Agents to appoint with the carrier, each as a pending appointment with no writing number '
+            'or states. Agents already appointed there are skipped. Needs a contract number and the '
+            'contracts create permission.'
+        ),
+    )
+
+
 class AgencyContractCreateSerializer(serializers.Serializer):
     agency = serializers.UUIDField()
     carrier = serializers.UUIDField(help_text='One live agency contract per carrier.')
     contract_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
     policy_types = _policy_types_field()
-    is_active = serializers.BooleanField(required=False)
+    status = serializers.ChoiceField(
+        choices=AGENCY_CONTRACT_STATUSES,
+        required=False,
+        help_text='Starts active. An active contract needs a contract number.',
+    )
+    agents = _agents_field()
 
 
 class AgencyContractUpdateSerializer(serializers.Serializer):
@@ -98,7 +115,12 @@ class AgencyContractUpdateSerializer(serializers.Serializer):
     carrier = serializers.UUIDField(required=False)
     contract_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
     policy_types = _policy_types_field()
-    is_active = serializers.BooleanField(required=False)
+    status = serializers.ChoiceField(
+        choices=AGENCY_CONTRACT_STATUSES,
+        required=False,
+        help_text='Starts active. An active contract needs a contract number.',
+    )
+    agents = _agents_field()
 
 
 class AgencyContractListQuerySerializer(serializers.Serializer):

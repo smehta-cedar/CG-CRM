@@ -66,18 +66,6 @@ agent_login = extend_schema(
 )
 
 
-agent_home = extend_schema(
-    tags=TAGS,
-    summary='Get the signed-in agent profile',
-    description=(
-        'The agent and, per agent_view permission, their details, licences, appointments, '
-        'certifications and portal passwords. A section the role does not grant is null. '
-        'A staff account gets 404.'
-    ),
-    responses={200: api_response(), **error_responses(401, 403, 404)},
-)
-
-
 refresh = extend_schema(
     tags=TAGS,
     summary='Refresh the access token',

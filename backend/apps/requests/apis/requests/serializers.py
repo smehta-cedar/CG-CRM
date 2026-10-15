@@ -72,31 +72,14 @@ class RequestCreateSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True)
 
 
-class AgentSelfRequestCreateSerializer(serializers.Serializer):
-    """What a signed-in agent files for themselves. The view sets `agent` from
-    the account; the body never picks another agent."""
-
-    type = serializers.ChoiceField(choices=AGENT_REQUEST_TYPES)
-    carrier_id = serializers.PrimaryKeyRelatedField(
-        source='carrier', queryset=Carrier.objects.all(), pk_field=serializers.UUIDField(), required=False, allow_null=True
-    )
-    state = serializers.CharField(min_length=2, max_length=2, required=False, allow_blank=True)
-    start_date = serializers.DateField(required=False, allow_null=True)
-    end_date = serializers.DateField(required=False, allow_null=True)
-    note = serializers.CharField(required=False, allow_blank=True)
-
-
 class MerchRequestCreateSerializer(serializers.Serializer):
-    """An order from the public shop, filed by the shop's service account.
-    `color` is the product colour's id; the order stores its label."""
+    """An order from the dashboard shop. Buyer contact comes from the signed-in
+    user in the view; `color` is the product colour's id and the order stores
+    its label."""
 
     product_id = serializers.PrimaryKeyRelatedField(
         source='product', queryset=Product.objects.filter(is_active=True), pk_field=serializers.UUIDField()
     )
-    buyer_name = serializers.CharField(max_length=255)
-    email = serializers.EmailField()
-    phone = serializers.CharField(max_length=20)
-    address = serializers.CharField()
     size = serializers.CharField(max_length=20)
     color = serializers.CharField(max_length=50)
     quantity = serializers.IntegerField(min_value=1, max_value=999)

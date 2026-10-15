@@ -148,3 +148,25 @@ def record_site_password_note(password, actor, kind, changes):
         created_by=actor,
         updated_by=actor,
     )
+
+
+# --- pending passwords for new carriers -------------------------------------
+
+def add_pending_password(carrier, actor=None, agent=None, agency=None):
+    """Give the agent (or the agency) a pending password at `carrier`, with a
+    blank username and password to fill in once the carrier issues the
+    login. Called whenever a carrier is added to them (an appointment, or the
+    agency's contract). Does nothing when they already have a live password
+    there. Returns the new password, or None."""
+    if Password.objects.filter(carrier=carrier, agent=agent, agency=agency).exists():
+        return None
+    password = Password.objects.create(
+        agent=agent,
+        agency=agency,
+        carrier=carrier,
+        status='pending',
+        created_by=actor,
+        updated_by=actor,
+    )
+    record_note(password, actor, PasswordNote.KIND_ADDED, diff_snapshots({}, snapshot(password)))
+    return password

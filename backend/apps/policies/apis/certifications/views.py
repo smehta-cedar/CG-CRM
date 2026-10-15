@@ -33,7 +33,7 @@ from .serializers import (
     CertificationUpdateSerializer,
 )
 
-CAN_MANAGE_CERTIFICATIONS = module_permission('certifications')
+CAN_MANAGE_CERTIFICATIONS = module_permission('agents')
 
 
 @swagger.certification_list

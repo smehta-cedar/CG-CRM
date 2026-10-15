@@ -5,7 +5,6 @@ from rest_framework.decorators import (
     throttle_classes,
     throttle_scope,
 )
-from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.serializers import TokenBlacklistSerializer
@@ -76,88 +75,6 @@ def agent_login(request):
     serializer = AgentLoginSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     return APIResponse(serializer.validated_data, 'Logged in successfully.')
-
-
-@swagger.agent_home
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def agent_home(request):
-    """This agent's own record, one section per `agent_view` permission. Staff get a 404.
-
-    A section the role doesn't grant comes back null (and its flag in
-    `sections` false). Without "My details" the agent keeps only their name
-    and status; without "My licences" their licence rows are left out.
-    """
-    from apps.agents.apis.agents.serializers import AgentSerializer
-    from apps.agents.models import Agent
-    from apps.contracts.apis.contracts.serializers import ContractSerializer
-    from apps.contracts.models import CarrierContract
-    from apps.passwords.apis.passwords.serializers import PasswordSerializer
-    from apps.passwords.models import Password
-    from apps.policies.apis.certifications.serializers import CertificationSerializer
-    from apps.policies.models import Certification
-
-    agent_id = request.user.agent_id
-    if not agent_id:
-        raise NotFound('No agent profile is linked to this account.')
-    agent = Agent.objects.prefetch_related('licenses__state').filter(pk=agent_id).first()
-    if agent is None:
-        raise NotFound('No agent profile is linked to this account.')
-    if not agent.is_active:
-        raise PermissionDenied(
-            'Your account is blocked. Please contact an administrator.',
-            'account_blocked',
-        )
-
-    sections = {
-        key: request.user.has_permission(f'agent_view.{key}', 'view')
-        for key in ('profile', 'licenses', 'contracts', 'certifications', 'passwords')
-    }
-
-    agent_data = AgentSerializer(agent).data
-    if not sections['profile']:
-        kept = ('id', 'name', 'is_active', 'licenses', 'created_at', 'updated_at')
-        agent_data = {
-            key: value if key in kept else ([] if key == 'aliases' else None if key == 'address' else '')
-            for key, value in agent_data.items()
-        }
-    if not sections['licenses']:
-        agent_data['licenses'] = []
-
-    contracts = None
-    if sections['contracts']:
-        contracts = ContractSerializer(
-            CarrierContract.objects.filter(agent=agent)
-            .select_related('agent', 'carrier')
-            .prefetch_related('appointed_states')
-            .order_by('carrier__name'),
-            many=True,
-        ).data
-    certifications = None
-    if sections['certifications']:
-        certifications = CertificationSerializer(
-            Certification.objects.filter(agent=agent)
-            .select_related('agent', 'carrier')
-            .order_by('due_date', 'carrier__name', 'line_of_business'),
-            many=True,
-        ).data
-    passwords = None
-    if sections['passwords']:
-        passwords = PasswordSerializer(
-            Password.objects.filter(agent=agent).select_related('agent', 'carrier').order_by('carrier__name'),
-            many=True,
-        ).data
-
-    return APIResponse(
-        {
-            'sections': sections,
-            'agent': agent_data,
-            'contracts': contracts,
-            'certifications': certifications,
-            'passwords': passwords,
-        },
-        'Profile fetched successfully.',
-    )
 
 
 @swagger.refresh

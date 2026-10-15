@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
 from apps.base.api.pagination import paginate
-from apps.base.api.permissions import module_permission
+from apps.base.api.permissions import ensure_own, module_permission
 from apps.base.api.response import APIResponse
 from apps.contracts.models import CarrierContract, CarrierContractNote
 from apps.contracts.utils import (
@@ -23,6 +23,7 @@ from apps.contracts.validators import (
     ensure_writing_number_free,
     resolve_states,
 )
+from apps.passwords.utils import add_pending_password
 from apps.policies.utils import add_contract_certifications
 
 from . import swagger
@@ -74,6 +75,7 @@ def contract_create(request):
     data = serializer.validated_data
 
     agent, carrier = data['agent'], data['carrier']
+    ensure_own(request.user, agent.pk)
     writing_number = data.get('writing_number', '').strip()
     ensure_carrier_accessible(carrier)
     ensure_pair_free(agent, carrier)
@@ -93,8 +95,10 @@ def contract_create(request):
         contract.appointed_states.set(states)
         # The note lists every filled field, as the contract now reads.
         record_note(contract, request.user, CarrierContractNote.KIND_ADDED, diff_snapshots({}, snapshot(contract)))
-        # The agent gets this year's certification for each of the carrier's lines.
+        # The agent gets this year's certification for each of the carrier's lines,
+        # and a pending password there to fill in once the carrier issues the login.
         add_contract_certifications(agent, carrier, request.user)
+        add_pending_password(carrier, request.user, agent=agent)
 
     return APIResponse(ContractSerializer(contract).data, 'Contract created successfully.', status=status.HTTP_201_CREATED)
 
@@ -108,6 +112,9 @@ def contract_detail(request, pk):
     if request.method == 'GET':
         return APIResponse(ContractSerializer(contract).data, 'Contract fetched successfully.')
 
+    # Everyone's contracts can be read; an agent's sign-in changes only its own.
+    ensure_own(request.user, contract.agent_id)
+
     if request.method == 'PATCH':
         # partial=True: only the fields that were sent get updated.
         serializer = ContractUpdateSerializer(data=request.data, partial=True)
@@ -115,6 +122,7 @@ def contract_detail(request, pk):
         fields = dict(serializer.validated_data)
 
         agent = fields.get('agent', contract.agent)
+        ensure_own(request.user, agent.pk)
         carrier = fields.get('carrier', contract.carrier)
         # Moving to another carrier needs that carrier open to agents; keeping it doesn't.
         if carrier != contract.carrier:
@@ -136,12 +144,17 @@ def contract_detail(request, pk):
         if states is not None or agent != contract.agent or carrier != contract.carrier:
             ensure_within_ceiling(states if states is not None else list(contract.appointed_states.all()), agent, carrier)
 
+        # Only a pair that is actually new gets a pending password, so one that
+        # was deleted on purpose isn't brought back by an unrelated edit.
+        new_pair = agent != contract.agent or carrier != contract.carrier
         before = snapshot(contract)
         with transaction.atomic():
             save_contract(contract, request.user, states=states, **fields)
             # Read the states again for the note and the response.
             contract = get_contract_or_404(pk)
             record_note(contract, request.user, CarrierContractNote.KIND_EDITED, diff_snapshots(before, snapshot(contract)))
+            if new_pair:
+                add_pending_password(contract.carrier, request.user, agent=contract.agent)
         return APIResponse(ContractSerializer(contract).data, 'Contract updated successfully.')
 
     # DELETE: soft delete; the agent + carrier pair becomes free again.

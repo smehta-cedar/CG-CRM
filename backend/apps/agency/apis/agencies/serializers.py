@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.agency.models import LICENSE_STATUSES, Agency, AgencyNote, AgencyStateLicense
+from apps.agency.models import Agency, AgencyComment, AgencyNote, AgencyStateLicense, LICENSE_STATUSES
 from apps.agency.utils import normalize_aliases
 
 
@@ -145,6 +145,11 @@ class AgencyCreateSerializer(serializers.Serializer):
         return normalize_aliases(value)
 
 
+class AgentLicenseInputSerializer(serializers.Serializer):
+    state = serializers.CharField(min_length=2, max_length=2, help_text='Two-letter state code.')
+    agents = serializers.ListField(child=serializers.UUIDField(), help_text='Agents to license in the state.')
+
+
 class AgencyUpdateSerializer(serializers.Serializer):
     """Send only the fields that change."""
 
@@ -155,6 +160,14 @@ class AgencyUpdateSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     licenses = _licenses_field()
     is_active = serializers.BooleanField(required=False)
+    agent_licenses = serializers.ListField(
+        child=AgentLicenseInputSerializer(),
+        required=False,
+        help_text=(
+            'Agents to license in a state, each with a pending licence and no number or dates. Agents '
+            'already licensed there are skipped. Needs the agents update permission.'
+        ),
+    )
 
     def validate_aliases(self, value):
         return normalize_aliases(value)
@@ -171,3 +184,23 @@ class AgencyListQuerySerializer(serializers.Serializer):
         allow_null=True,
         help_text='true for operating agencies, false for switched-off ones.',
     )
+
+
+class AgencyCommentSerializer(serializers.ModelSerializer):
+    """One note written on the agency."""
+
+    agency_id = serializers.UUIDField(read_only=True)
+    created_by = serializers.SerializerMethodField(help_text='The full name of who wrote it.')
+
+    class Meta:
+        model = AgencyComment
+        fields = ('id', 'agency_id', 'body', 'created_by', 'created_at')
+        read_only_fields = fields
+
+    def get_created_by(self, comment) -> str | None:
+        user = comment.created_by
+        return user.full_name if user else None
+
+
+class AgencyCommentCreateSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=5000, help_text='The note; surrounding spaces are dropped.')

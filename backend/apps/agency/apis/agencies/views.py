@@ -1,9 +1,10 @@
 from django.db import transaction
+from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
-from apps.agency.models import Agency, AgencyNote
+from apps.agency.models import Agency, AgencyComment, AgencyNote
 from apps.agency.utils import (
     diff_snapshots,
     filter_agencies,
@@ -17,13 +18,16 @@ from apps.agency.utils import (
     snapshot,
     sync_licenses,
 )
-from apps.agency.validators import ensure_name_free, ensure_npn_free, resolve_licenses
+from apps.agency.validators import ensure_name_free, ensure_npn_free, resolve_agent_licenses, resolve_licenses
+from apps.agents.utils import add_pending_license
 from apps.base.api.pagination import paginate
 from apps.base.api.permissions import module_permission
 from apps.base.api.response import APIResponse
 
 from . import swagger
 from .serializers import (
+    AgencyCommentCreateSerializer,
+    AgencyCommentSerializer,
     AgencyCreateSerializer,
     AgencyListQuerySerializer,
     AgencyNoteSerializer,
@@ -32,6 +36,8 @@ from .serializers import (
 )
 
 CAN_MANAGE_AGENCIES = module_permission('agencies')
+# Writing or deleting a note changes the agency, so both need update.
+CAN_COMMENT_ON_AGENCIES = module_permission('agencies', {'POST': 'update', 'DELETE': 'update'})
 
 
 @swagger.agency_list
@@ -124,6 +130,7 @@ def agency_detail(request, pk):
         licenses = None
         if 'licenses' in fields:
             licenses = resolve_licenses(fields.pop('licenses'))
+        agent_licenses = resolve_agent_licenses(request.user, fields.pop('agent_licenses', []))
 
         before = snapshot(agency)
         with transaction.atomic():
@@ -131,6 +138,9 @@ def agency_detail(request, pk):
                 save_agency(agency, request.user, **fields)
             if licenses is not None:
                 sync_licenses(agency, request.user, licenses)
+            for state, agents in agent_licenses:
+                for agent in agents:
+                    add_pending_license(agent, state, request.user)
             # Read the rows again for the note and the response.
             agency = get_agency_or_404(pk)
             record_note(agency, request.user, AgencyNote.KIND_EDITED, diff_snapshots(before, snapshot(agency)))
@@ -149,3 +159,30 @@ def agency_notes(request, pk):
     # Newest first (the model's ordering). Not paginated: an agency has a handful.
     notes = agency.notes.select_related('created_by')
     return APIResponse(AgencyNoteSerializer(notes, many=True).data, 'Agency notes fetched successfully.')
+
+
+@swagger.agency_comments
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated, CAN_COMMENT_ON_AGENCIES])
+def agency_comments(request, pk):
+    agency = get_agency_or_404(pk)
+
+    if request.method == 'GET':
+        # Newest first (the model's ordering). Not paginated: an agency has a handful.
+        comments = agency.comments.select_related('created_by')
+        return APIResponse(AgencyCommentSerializer(comments, many=True).data, 'Agency notes fetched successfully.')
+
+    serializer = AgencyCommentCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    body = serializer.validated_data['body'].strip()
+    comment = AgencyComment.objects.create(agency=agency, body=body, created_by=request.user, updated_by=request.user)
+    return APIResponse(AgencyCommentSerializer(comment).data, 'Agency note added successfully.', status=status.HTTP_201_CREATED)
+
+
+@swagger.agency_comment_delete
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated, CAN_COMMENT_ON_AGENCIES])
+def agency_comment_delete(request, pk):
+    comment = get_object_or_404(AgencyComment, pk=pk)
+    comment.delete(user=request.user)
+    return APIResponse(None, 'Agency note deleted successfully.')

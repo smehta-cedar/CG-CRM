@@ -16,7 +16,7 @@ def make_policy_type(**overrides):
 
 def make_role(**flags):
     role = Role.objects.create(name=f"policy-types-{'-'.join(k for k, v in flags.items() if v) or 'none'}")
-    RolePermission.objects.create(role=role, module='policy_types', **flags)
+    RolePermission.objects.create(role=role, module='carriers.list', **flags)
     return role
 
 

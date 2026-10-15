@@ -4,6 +4,7 @@ from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Role, RolePermission, User
+from apps.agents.models import Agent, AgentStateLicense
 
 from .models import Agency, AgencyNote, State
 
@@ -426,3 +427,86 @@ class AgencyLicenseTests(AgencyAPITestCase):
             {'field': 'license_lines', 'from': 'TX Life', 'to': 'FL Health, TX Life & Health'},
             agency.notes.get().changes,
         )
+
+
+class AgencyAgentLicenseTests(AgencyAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.agency = make_agency()
+        self.ann = Agent.objects.create(name='Ann Lee', npn='111')
+        self.bob = Agent.objects.create(name='Bob Ray', npn='222')
+
+    def patch(self, agents, state='TX'):
+        return self.client.patch(
+            self.detail_url(self.agency),
+            {
+                'licenses': [{'state': state, 'license_number': 'A1'}],
+                'agent_licenses': [{'state': state, 'agents': [str(agent.pk) for agent in agents]}],
+            },
+            format='json',
+        )
+
+    def test_licenses_each_agent_pending_with_a_note(self):
+        response = self.patch([self.ann, self.bob])
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = AgentStateLicense.objects.filter(state__code='TX').order_by('agent__name')
+        self.assertEqual(
+            [(row.agent.name, row.status, row.license_number, row.start_date) for row in rows],
+            [('Ann Lee', 'pending', '', None), ('Bob Ray', 'pending', '', None)],
+        )
+        self.assertEqual(self.ann.notes.get().kind, 'edited')
+
+    def test_skips_agents_already_licensed(self):
+        self.ann.licenses.create(state=State.objects.get(code='TX'), license_number='N9', status='active')
+        response = self.patch([self.ann, self.bob])
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self.ann.licenses.get().status, 'active')
+        self.assertFalse(self.ann.notes.exists())
+        self.assertEqual(self.bob.licenses.get().status, 'pending')
+
+    def test_unknown_agent_is_a_400(self):
+        response = self.patch([self.agency])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['errors']['agent_licenses'], ['Unknown agent.'])
+        self.assertFalse(AgentStateLicense.objects.exists())
+
+    def test_needs_agents_update_permission(self):
+        staff = User.objects.create_user(email='staff@example.com', password='Sup3r-secret!', full_name='Staff')
+        staff.roles.set([make_role(can_view=True, can_update=True)])
+        self.client.force_authenticate(staff)
+        response = self.patch([self.ann])
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(AgentStateLicense.objects.exists())
+
+
+class AgencyCommentTests(AgencyAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.agency = make_agency()
+        self.url = reverse('agency:apis:agencies:comments', args=[self.agency.pk])
+
+    def test_add_list_and_delete(self):
+        response = self.client.post(self.url, {'body': '  Call Humana on Monday.  '}, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['data']['body'], 'Call Humana on Monday.')
+        self.assertEqual(response.data['data']['created_by'], 'Admin')
+        self.client.post(self.url, {'body': 'Second'}, format='json')
+
+        listed = self.client.get(self.url).data['data']
+        self.assertEqual([comment['body'] for comment in listed], ['Second', 'Call Humana on Monday.'])
+        # Notes are not change-log entries.
+        self.assertFalse(self.agency.notes.exists())
+
+        delete_url = reverse('agency:apis:agencies:comment-delete', args=[listed[0]['id']])
+        self.assertEqual(self.client.delete(delete_url).status_code, 200)
+        self.assertEqual(len(self.client.get(self.url).data['data']), 1)
+
+    def test_blank_body_is_a_400(self):
+        self.assertEqual(self.client.post(self.url, {'body': '   '}, format='json').status_code, 400)
+
+    def test_view_only_role_can_read_but_not_write(self):
+        staff = User.objects.create_user(email='staff@example.com', password='Sup3r-secret!', full_name='Staff')
+        staff.roles.set([make_role(can_view=True, can_create=True)])
+        self.client.force_authenticate(staff)
+        self.assertEqual(self.client.get(self.url).status_code, 200)
+        self.assertEqual(self.client.post(self.url, {'body': 'Hi'}, format='json').status_code, 403)

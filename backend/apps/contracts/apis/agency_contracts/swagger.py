@@ -35,9 +35,10 @@ agency_contract_create = extend_schema(
     summary='Create an agency contract',
     description=(
         'One live contract per carrier; a taken carrier is a 400 under carrier. policy_types are '
-        'optional catalog policy types; unknown ones are ignored. The contract number may be blank; agents can only be given the '
-        'carrier once it is set. The agency\'s login at the carrier is an agency password. '
-        'Records an "added" note listing every filled field.'
+        'optional catalog policy types; unknown ones are ignored. status starts active; an active contract needs a contract number, other statuses '
+        'may leave it blank. Agents can only be given the carrier while it is active with a number.The agency\'s login at the carrier is an agency password. '
+        'Records an "added" note listing every filled field. agents are appointed with the carrier '
+        '(pending, no writing number or states); already appointed ones are skipped.'
     ),
     request=AgencyContractCreateSerializer,
     responses={201: api_response(AgencyContractSerializer), **error_responses(400, 401, 403)},
@@ -55,7 +56,10 @@ agency_contract_detail = combine_schemas(
         methods=['PATCH'],
         tags=TAGS,
         summary='Update an agency contract',
-        description='Records an "edited" note when something changed.',
+        description=(
+            'Records an "edited" note when something changed. agents are appointed with the carrier '
+            '(pending, no writing number or states); already appointed ones are skipped.'
+        ),
         request=AgencyContractUpdateSerializer,
         responses={200: api_response(AgencyContractSerializer), **error_responses(400, 401, 403, 404)},
     ),

@@ -92,25 +92,41 @@ All under `/api/v1/`. Everything except `auth/login/` requires
 | POST | `roles/create/` | superuser |
 | GET, PATCH, DELETE | `roles/{id}/` | `users` view · superuser · superuser |
 | GET | `requests/` | `requests` view |
-| POST | `requests/create/` · `requests/merch/` | `requests` create |
+| POST | `requests/create/` | `requests` create |
+| POST | `requests/merch/` | `requests` or `storefront.shop` create |
 | GET, PATCH, DELETE | `requests/{id}/` | `requests` view · update · delete |
 | GET | `storefront/catalog/` | public |
-| GET | `storefront/products/` | `storefront` view |
-| POST | `storefront/products/create/` | `storefront` create |
-| GET, PATCH, DELETE | `storefront/products/{id}/` | `storefront` view · update · delete |
-| GET | `storefront/products/{id}/notes/` | `storefront` view |
-| GET | `policy-types/` | `policy_types` view |
-| POST | `policy-types/create/` | `policy_types` create |
-| GET, PATCH, DELETE | `policy-types/{id}/` | `policy_types` view · update · delete |
-| GET | `policy-types/{id}/notes/` | `policy_types` view |
+| GET | `storefront/products/` | `storefront.products` view |
+| POST | `storefront/products/create/` | `storefront.products` create |
+| GET, PATCH, DELETE | `storefront/products/{id}/` | `storefront.products` view · update · delete |
+| GET | `storefront/products/{id}/notes/` | `storefront.products` view |
+| GET | `policy-types/` | `carriers` or `agencies` view |
+| POST | `policy-types/create/` | `carriers` or `agencies` create |
+| GET, PATCH, DELETE | `policy-types/{id}/` | `carriers` or `agencies` view · update · delete |
+| GET | `policy-types/{id}/notes/` | `carriers` or `agencies` view |
 | GET | `carrier-policies/` | `carriers` view |
 | POST | `carrier-policies/create/` | `carriers` create |
 | GET, PATCH, DELETE | `carrier-policies/{id}/` | `carriers` view · update · delete |
 | GET | `carrier-policies/{id}/notes/` | `carriers` view |
-| GET | `certifications/` | `certifications` view |
-| POST | `certifications/create/` | `certifications` create |
-| GET, PATCH, DELETE | `certifications/{id}/` | `certifications` view · update · delete |
-| GET | `certifications/{id}/notes/` | `certifications` view |
+| GET | `certifications/` | `agents` view |
+| POST | `certifications/create/` | `agents` create |
+| GET, PATCH, DELETE | `certifications/{id}/` | `agents` view · update · delete |
+| GET | `certifications/{id}/notes/` | `agents` view |
+
+Permission codes follow the sidebar links (`MODULES` in
+`apps/accounts/models/roles.py`): `dashboard` (Overview), `agents.list`,
+`agents.profile`, `carriers.list`, `carriers.profile`, `rulebook`,
+`passwords`, `contracts.by_state`, `contracts.by_carriers`, `requests`
+(Calendar), `storefront.products`, `storefront.shop`, `users`, `agencies`
+(Agency). A section code in the table
+(`agents`, `carriers`, `contracts`) is allowed when any of its sub-links is.
+
+Agents sign in with the built-in Agent role's permissions, the same codes as
+staff. The own-records layer (`own_only` / `ensure_own` in
+`apps/base/api/permissions.py`) narrows them: requests (Calendar) are read and
+written only for the agent's own record, contracts are read in full but
+added, changed or deleted only for their own, and a Shop order is filed under
+them.
 
 `GET /agencies/` takes `?search=` (name, alias, NPN, email, phone) and
 `?is_active=`, plus `?page=` / `?page_size=`.
@@ -169,8 +185,8 @@ listing name, policy type (by name), carrier (by name), available states
 and status; `carrier-policies/{id}/notes/` lists them newest first.
 
 `GET /certifications/` (an agent's yearly certification with a carrier for
-one of its lines of business, also in `apps.policies`, with its own
-`certifications` permission module; policy types play no part) takes
+one of its lines of business, also in `apps.policies`, guarded by
+the `agents` permission; policy types play no part) takes
 `?agent=`, `?carrier=` and `?line_of_business=`, plus paging; rows come back
 by agent name, then due date, carrier name and line of business, and carry
 `agent` and `carrier` summaries. A certification has an `agent` (the only
@@ -214,6 +230,29 @@ naming a carrier got that carrier back, any other became a site password.
 For both kinds, `username` and `portal_password` may be blank only while
 `status` is `pending`; otherwise a blank one is a 400 under that field. A
 PATCH is checked against the values the password ends up with.
+
+Adding a carrier gives a **pending password** automatically: creating an
+appointment (`POST /contracts/create/`) gives that agent a pending carrier
+password there, and creating an agency contract gives the agency one, with a
+blank username and password and an "added" note. A PATCH that moves a
+contract to a new carrier (or agent) does the same; other edits don't, so a
+pending password deleted on purpose stays deleted. Nothing is added when a
+live password already exists. `python manage.py add_pending_passwords` does
+the same for every existing live contract; it is safe to rerun.
+
+An agency contract has a `status`, the same set as an agency licence:
+`active` (the default), `pending`, `applied`, `expired` or `cancelled`. An
+active contract needs a `contract_number` (400 under it); any other status
+may leave it blank. A carrier is open to agents (appointments, portal
+passwords) only while its contract is active and has a number.
+
+An agency contract's create and PATCH also take `agents`, a list of agent
+IDs to appoint with its carrier in the same save: each gets a `pending`
+appointment with no writing number or states, its "added" note, this year's
+certifications and a pending password, as if added on Contracts. Agents
+already appointed there are skipped. It needs the `contracts` create
+permission (403 otherwise) and an active contract with a number (400 under
+`agents`).
 
 `GET /contracts/` (appointments: one agent contracted with one carrier)
 takes `?search=` (agent name, carrier name, writing number), `?agent_id=`,
@@ -276,7 +315,7 @@ order. The shop has no sign-in, so the Next server posts orders as the
 `shop@cedargrove.local` account that `seed_requests` creates with a `Shop`
 role (requests: view and create only); its password is printed once and
 goes in `frontend/.env.local` as `SHOP_API_PASSWORD`. A `PATCH` sets the
-status (pending / approved / denied) or the note.
+status (pending / applied / approved / denied) or the note.
 
 An agency carries `licenses` (state licence rows) exactly like an agent and
 takes `licenses` on create and update the same way, except that each row
@@ -287,6 +326,16 @@ are given, and a kept row keeps whatever is left out or null. The change
 note lists `license_statuses` and `license_dates` alongside the states and
 numbers. `agencies/{id}/notes/` lists its change notes.
 
+Written notes are separate from the change log: `GET agencies/{id}/comments/`
+lists them newest first (`body`, `created_by`, `created_at`), `POST` with
+`{"body"}` adds one, and `DELETE agencies/comments/{id}/` removes one (soft
+delete). Adding and deleting need the `agencies` update permission.
+
+An agency PATCH also takes `agent_licenses`, a list of `{"state", "agents"}`:
+each listed agent gets a `pending` licence in that state with no number or
+dates, and an "edited" note on the agent. Agents already licensed there are
+skipped. It needs the `agents` update permission (403 otherwise).
+
 Three roles are built in: Admin, Operations and Agent. A migration creates
 them (an old Staff role becomes Operations, users and all), and the API
 refuses to delete, rename or switch them off; their description and
@@ -296,7 +345,7 @@ sign-in takes its permissions from Agent.
 `seed_users` sets passwords exactly as the file holds them, skipping the
 strength validators. A built-in role with no permissions yet gets defaults:
 Admin every action on every module, Operations view on every module, Agent
-view on its own sections plus create on My requests. A role that already has
+view and create on Calendar. A role that already has
 permissions is left as set. `"staff"` in users.json means Operations. It
 never touches a superuser.
 

@@ -19,6 +19,7 @@ REQUEST_TYPES = (
 
 REQUEST_STATUSES = (
     ('pending', 'Pending'),
+    ('applied', 'Applied'),
     ('approved', 'Approved'),
     ('denied', 'Denied'),
 )

@@ -23,11 +23,6 @@ DEFAULT_FILE = REPO_ROOT / 'frontend' / 'data' / 'users.json'
 ROLE_NAMES = {'admin': ADMIN_ROLE_NAME, 'operations': OPERATIONS_ROLE_NAME}
 ROLE_ALIASES = {'staff': 'operations'}
 
-# What every agent account sees of their own record, plus create on My requests.
-AGENT_VIEW_MODULES = tuple(
-    module for module in PERMISSION_LABELS if module.startswith('agent_view.')
-)
-
 
 class Command(BaseCommand):
     """Load sign-in accounts from the frontend's users.json.
@@ -105,14 +100,8 @@ class Command(BaseCommand):
         return role
 
     def _ensure_agent_role(self):
-        """The role every agent OTP account uses: view each Agent-view section,
-        and create on My requests so they can file for themselves."""
+        """The role every agent OTP account uses: Calendar, to see and file their own requests."""
         role, empty = self._get_role(AGENT_ROLE_NAME)
         if empty:
-            for module in AGENT_VIEW_MODULES:
-                flags = {f'can_{action}': False for action in ACTIONS}
-                flags['can_view'] = True
-                if module == 'agent_view.requests':
-                    flags['can_create'] = True
-                RolePermission.objects.create(role=role, module=module, **flags)
+            RolePermission.objects.create(role=role, module='requests', can_view=True, can_create=True)
         return role

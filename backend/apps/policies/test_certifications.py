@@ -281,24 +281,24 @@ class CertificationPermissionTests(CertificationAPITestCase):
         self.assertEqual(self.client.get(self.list_url()).status_code, 403)
 
     def test_view_only_role_can_list_but_not_create(self):
-        self.staff.roles.set([make_role('certifications', can_view=True)])
+        self.staff.roles.set([make_role('agents.profile', can_view=True)])
         self.assertEqual(self.client.get(self.list_url()).status_code, 200)
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 403)
 
     def test_create_role_can_create(self):
-        self.staff.roles.set([make_role('certifications', can_view=True, can_create=True)])
+        self.staff.roles.set([make_role('agents.profile', can_view=True, can_create=True)])
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 201)
 
-    def test_agents_or_policy_types_role_alone_is_not_enough(self):
-        for module in ('agents', 'policy_types'):
+    def test_carriers_or_agency_role_alone_is_not_enough(self):
+        for module in ('carriers.list', 'agencies'):
             self.staff.roles.set([make_role(module, can_view=True, can_create=True)])
             self.assertEqual(self.client.get(self.list_url()).status_code, 403, module)
 
-    def test_module_is_listed_for_roles(self):
+    def test_granted_with_agents_not_on_its_own(self):
         self.client.force_authenticate(self.admin)
         response = self.client.get(reverse('accounts:apis:roles:modules'))
         self.assertEqual(response.status_code, 200)
-        self.assertIn('certifications', str(response.data))
+        self.assertNotIn('certifications', [module['code'] for module in response.data['data']])
 
 
 def make_pdf(name='certificate.pdf', body=b'%PDF-1.7\n%fake\n'):
@@ -417,7 +417,7 @@ class CertificationFileTests(CertificationAPITestCase):
         staff = User.objects.create_user(email='staff@example.com', password='Sup3r-secret!', full_name='Staff')
         self.client.force_authenticate(staff)
         self.assertEqual(self.client.get(self.file_url(certification)).status_code, 403)
-        staff.roles.set([make_role('certifications', can_view=True)])
+        staff.roles.set([make_role('agents.profile', can_view=True)])
         self.client.force_authenticate(User.objects.get(pk=staff.pk))
         self.assertEqual(self.client.get(self.file_url(certification)).status_code, 200)
 

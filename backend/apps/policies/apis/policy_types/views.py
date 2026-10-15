@@ -30,7 +30,7 @@ from .serializers import (
     PolicyTypeUpdateSerializer,
 )
 
-CAN_MANAGE_POLICY_TYPES = module_permission('policy_types')
+CAN_MANAGE_POLICY_TYPES = module_permission(('carriers', 'agencies'))
 
 
 @swagger.policy_type_list

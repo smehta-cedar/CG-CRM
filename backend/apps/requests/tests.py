@@ -26,10 +26,6 @@ class RequestAPITestCase(APITestCase):
         )
         self.order = {
             'product_id': str(self.product.pk),
-            'buyer_name': 'Shop  Check',
-            'email': 'Buyer@Example.com',
-            'phone': '(555)010-9999',
-            'address': '1 Main St',
             'size': 'M',
             'color': 'teal',
             'quantity': 2,
@@ -74,13 +70,18 @@ class RequestCreateTests(RequestAPITestCase):
         self.assertIsNone(response.data['data']['carrier'])
 
     def test_merch_order(self):
+        self.admin.phone = '(555)010-9999'
+        self.admin.save(update_fields=['phone'])
         response = self.client.post(self.url('merch'), self.order, format='json')
         self.assertEqual(response.status_code, 201, response.data)
         data = response.data['data']
         self.assertEqual(data['type'], 'merch')
         self.assertEqual(data['product']['name'], 'Tee')
-        self.assertEqual(data['buyer_name'], 'Shop Check')
-        self.assertEqual(data['email'], 'buyer@example.com')
+        # Buyer contact comes from the signed-in user, not the request body.
+        self.assertEqual(data['buyer_name'], 'Admin')
+        self.assertEqual(data['email'], 'admin@example.com')
+        self.assertEqual(data['phone'], '(555)010-9999')
+        self.assertEqual(data['address'], '')
         # The colour is stored by its label.
         self.assertEqual(data['color'], 'Teal')
         self.assertEqual(data['quantity'], 2)
@@ -142,14 +143,18 @@ class RequestPermissionTests(RequestAPITestCase):
             403,
         )
 
+    def test_shop_add_can_order_but_not_see_requests(self):
+        role = Role.objects.create(name='Shop')
+        RolePermission.objects.create(role=role, module='storefront.shop', can_view=True, can_create=True)
+        self.shop.roles.set([role])
+        response = self.client.post(self.url('merch'), {**self.order, 'quantity': 1}, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(self.client.get(self.url('list')).status_code, 403)
+
 
 class AgentOwnRequestTests(RequestAPITestCase):
     def setUp(self):
         super().setUp()
-        agent_role = Role.objects.get(name='Agent')  # built in
-        RolePermission.objects.create(
-            role=agent_role, module='agent_view.requests', can_view=True, can_create=True
-        )
         self.agent_user = User.objects.create_user(
             email='maria@example.com', password='x', full_name='Maria Alva', agent=self.agent
         )
@@ -159,28 +164,38 @@ class AgentOwnRequestTests(RequestAPITestCase):
             type='day_off', agent=self.agent, start_date='2026-10-01', end_date='2026-10-02'
         )
 
-    def test_mine_lists_only_own_and_carriers(self):
-        self.client.force_authenticate(self.agent_user)
-        response = self.client.get(self.url('mine'))
-        self.assertEqual(response.status_code, 200, response.data)
-        rows = response.data['data']['requests']
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['agent']['id'], str(self.agent.pk))
-        self.assertEqual(response.data['data']['carriers'][0]['name'], 'Humana')
-
-    def test_mine_create_forces_signed_in_agent(self):
-        self.client.force_authenticate(self.agent_user)
-        response = self.client.post(
-            self.url('mine'),
-            {'type': 'day_off', 'start_date': '2026-11-01', 'end_date': '2026-11-01'},
-            format='json',
+    def test_calendar_shows_and_changes_only_own_requests(self):
+        RolePermission.objects.create(
+            role=Role.objects.get(name='Agent'), module='requests',
+            can_view=True, can_create=True, can_update=True, can_delete=True,
         )
+        self.client.force_authenticate(self.agent_user)
+        rows = self.client.get(self.url('list')).data['data']
+        self.assertEqual({row['agent']['id'] for row in rows}, {str(self.agent.pk)})
+        others = Request.objects.exclude(agent=self.agent).get(type='day_off')
+        self.assertEqual(self.client.get(self.url('detail', others.pk)).status_code, 404)
+        self.assertEqual(self.client.delete(self.url('detail', others.pk)).status_code, 404)
+        day_off = {'type': 'day_off', 'start_date': '2026-11-01', 'end_date': '2026-11-01'}
+        other_agent = Agent.objects.exclude(pk=self.agent.pk).get()
+        response = self.client.post(self.url('create'), {**day_off, 'agent_id': str(other_agent.pk)}, format='json')
+        self.assertEqual(response.status_code, 403)
+        response = self.client.post(self.url('create'), {**day_off, 'agent_id': str(self.agent.pk)}, format='json')
         self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(response.data['data']['agent']['id'], str(self.agent.pk))
-        self.assertEqual(response.data['data']['status'], 'pending')
 
-    def test_staff_cannot_use_mine(self):
-        staff = User.objects.create_user(email='staff@example.com', password='x', full_name='Staff')
-        staff.roles.set([make_role(can_view=True, can_create=True)])
-        self.client.force_authenticate(staff)
-        self.assertEqual(self.client.get(self.url('mine')).status_code, 403)
+    def test_shop_order_lands_on_the_agents_calendar(self):
+        self.agent.address_street = '1420 Cedar Grove Ln'
+        self.agent.address_city = 'Austin'
+        self.agent.address_state = 'TX'
+        self.agent.address_zip = '78704'
+        self.agent.save()
+        RolePermission.objects.create(
+            role=Role.objects.get(name='Agent'), module='storefront.shop', can_view=True, can_create=True
+        )
+        self.client.force_authenticate(self.agent_user)
+        response = self.client.post(self.url('merch'), {**self.order, 'quantity': 1}, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        data = response.data['data']
+        self.assertEqual(data['agent']['id'], str(self.agent.pk))
+        self.assertEqual(data['buyer_name'], 'Maria Alva')
+        self.assertEqual(data['email'], 'maria@example.com')
+        self.assertEqual(data['address'], '1420 Cedar Grove Ln, Austin, TX 78704')

@@ -253,7 +253,7 @@ class PasswordDetailTests(PasswordAPITestCase):
 
 
 class PasswordCarrierAccessTests(PasswordAPITestCase):
-    MESSAGE = ['Add a contract number before an agent can use this carrier.']
+    MESSAGE = ["The agency's contract with this carrier must be active with a contract number first."]
 
     def test_rejects_carrier_whose_agency_contract_has_no_number(self):
         AgencyCarrierContract.objects.filter(carrier=self.carrier).update(contract_number='')
