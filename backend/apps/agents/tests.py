@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from django.urls import reverse
 from rest_framework.test import APITestCase
@@ -77,12 +77,12 @@ class AgentCreateTests(AgentAPITestCase):
         self.assertEqual(data['npn'], '17654321')
         self.assertEqual(data['address'], SAMPLE['address'])
         self.assertEqual(data['personal_phone'], '')
-        # Licences come back in state-code order, active, running two years from today.
+        # Licences come back in state-code order, active, from today with no end date.
         self.assertEqual([row['state'] for row in data['licenses']], ['FL', 'TX'])
         self.assertEqual(data['licenses'][1]['license_number'], '2104587')
         self.assertEqual(data['licenses'][1]['status'], 'active')
         self.assertEqual(data['licenses'][1]['start_date'], date.today().isoformat())
-        self.assertEqual(data['licenses'][1]['end_date'][:4], str(date.today().year + 2))
+        self.assertIsNone(data['licenses'][1]['end_date'])
         self.assertTrue(data['is_active'])
 
     def test_records_an_added_note(self):
@@ -335,9 +335,9 @@ class AgentDetailTests(AgentAPITestCase):
                 'licenses': [
                     # Dates sent: the kept row takes them.
                     {'state': 'TX', 'license_number': '2104587', 'start_date': '2025-03-01', 'end_date': '2027-03-01'},
-                    # Only a start date: the new row's end defaults two years on from it.
+                    # Only a start date: the new row has no end date.
                     {'state': 'FL', 'license_number': 'W1', 'start_date': '2025-06-15'},
-                    # No dates: today and two years on, as before.
+                    # No dates: today and no end date.
                     {'state': 'CA', 'license_number': 'C1'},
                 ]
             },
@@ -346,14 +346,14 @@ class AgentDetailTests(AgentAPITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         rows = {row['state']: row for row in response.data['data']['licenses']}
         self.assertEqual((rows['TX']['start_date'], rows['TX']['end_date']), ('2025-03-01', '2027-03-01'))
-        self.assertEqual((rows['FL']['start_date'], rows['FL']['end_date']), ('2025-06-15', '2027-06-15'))
+        self.assertEqual((rows['FL']['start_date'], rows['FL']['end_date']), ('2025-06-15', None))
         self.assertEqual(rows['CA']['start_date'], date.today().isoformat())
-        self.assertEqual(rows['CA']['end_date'][:4], str(date.today().year + 2))
+        self.assertIsNone(rows['CA']['end_date'])
         note = agent.notes.get()
         dates = next(change for change in note.changes if change['field'] == 'license_dates')
         self.assertEqual(dates['from'], 'TX 2024-01-01 to 2030-01-01')
         self.assertTrue(dates['to'].startswith('CA '))
-        self.assertIn('FL 2025-06-15 to 2027-06-15', dates['to'])
+        self.assertIn('FL 2025-06-15 to ?', dates['to'])
         self.assertIn('TX 2025-03-01 to 2027-03-01', dates['to'])
 
         # A kept row sent without dates keeps the ones it has.
@@ -524,3 +524,40 @@ class AgentPermissionTests(AgentAPITestCase):
         self.staff.roles.set([make_role(can_view=True)])
         self.assertEqual(self.client.get(self.list_url()).status_code, 200)
         self.assertEqual(self.client.post(self.create_url(), SAMPLE, format='json').status_code, 403)
+
+
+class AgentLicenseRenewalTests(AgentAPITestCase):
+    """`renewing` sticks only while the end date is within 60 days or passed, and leaves the status alone."""
+
+    def patch_tx(self, agent, **fields):
+        response = self.client.patch(
+            self.detail_url(agent), {'licenses': [{'state': 'TX', **fields}]}, format='json'
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data['data']['licenses'][0]
+
+    def test_renewing_is_kept_inside_the_window_and_the_status_stays(self):
+        agent = make_agent(licenses=[{'state': 'TX'}])
+        soon = (date.today() + timedelta(days=30)).isoformat()
+        row = self.patch_tx(agent, end_date=soon, renewing=True)
+        self.assertTrue(row['renewing'])
+        self.assertEqual(row['status'], 'active')
+        # Left out on a later save: unchanged.
+        self.assertTrue(self.patch_tx(agent, license_number='9')['renewing'])
+
+    def test_renewing_is_cleared_outside_the_window(self):
+        agent = make_agent(licenses=[{'state': 'TX'}])
+        self.assertFalse(self.patch_tx(agent, renewing=True)['renewing'])
+
+    def test_a_new_end_date_past_the_window_clears_it(self):
+        agent = make_agent(licenses=[{'state': 'TX'}])
+        self.patch_tx(agent, end_date=(date.today() + timedelta(days=10)).isoformat(), renewing=True)
+        renewed = (date.today() + timedelta(days=400)).isoformat()
+        self.assertFalse(self.patch_tx(agent, end_date=renewed)['renewing'])
+
+    def test_an_expired_licence_can_be_marked_renewing(self):
+        agent = make_agent(licenses=[{'state': 'TX'}])
+        past = (date.today() - timedelta(days=5)).isoformat()
+        row = self.patch_tx(agent, start_date='2020-01-01', end_date=past, renewing=True)
+        self.assertTrue(row['renewing'])
+        self.assertEqual(row['status'], 'expired')

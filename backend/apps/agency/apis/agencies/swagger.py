@@ -34,7 +34,7 @@ agency_create = extend_schema(
     operation_id='agencies_create',
     tags=TAGS,
     summary='Create an agency',
-    description='Records an "added" note. `licenses` creates one licence row per state: active unless a `status` is given, and starting today and running two years unless `start_date` / `end_date` are given.',
+    description='Records an "added" note. `licenses` creates one licence row per state: active unless a `status` is given, starting today unless a `start_date` is given, and with no end date unless an `end_date` is given.',
     request=AgencyCreateSerializer,
     responses={201: api_response(AgencySerializer), **error_responses(400, 401, 403)},
 )

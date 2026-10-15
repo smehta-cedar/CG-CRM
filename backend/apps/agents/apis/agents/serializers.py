@@ -23,7 +23,7 @@ class AgentLicenseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AgentStateLicense
-        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date', 'life', 'health')
+        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date', 'renewing', 'life', 'health')
         read_only_fields = fields
 
 
@@ -118,7 +118,16 @@ class LicenseInputSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         default=None,
-        help_text='YYYY-MM-DD. Left out: two years on for a new row, unchanged for a kept one.',
+        help_text='YYYY-MM-DD. Left out: none for a new row, unchanged for a kept one.',
+    )
+    renewing = serializers.BooleanField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text=(
+            'A renewal is under way. Left out: off for a new row, unchanged for a kept one. '
+            'Cleared on save unless the end date is within 60 days or passed.'
+        ),
     )
 
     def validate(self, data):

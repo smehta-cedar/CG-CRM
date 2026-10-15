@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.db import models
 from django.utils import timezone
 
@@ -17,6 +19,26 @@ LICENSE_STATUSES = (
     ('expired', 'Expired'),
     ('cancelled', 'Cancelled'),
 )
+
+# A licence can be marked renewing from this many days before its end date,
+# and after it; the status keeps its own value meanwhile.
+RENEWAL_WINDOW_DAYS = 60
+
+
+def renewal_open(end_date):
+    """Whether a licence ending on `end_date` can be marked renewing: it has
+    an end date, and that date is at most RENEWAL_WINDOW_DAYS away or passed."""
+    return end_date is not None and end_date <= timezone.localdate() + timedelta(days=RENEWAL_WINDOW_DAYS)
+
+
+def clear_closed_renewal(row, kwargs):
+    """Untick `renewing` on a row being saved once its end date is outside the
+    window (renewed, or no date), and save the flag whenever the date is."""
+    if row.renewing and not renewal_open(row.end_date):
+        row.renewing = False
+    update_fields = kwargs.get('update_fields')
+    if update_fields is not None and 'end_date' in update_fields and 'renewing' not in update_fields:
+        kwargs['update_fields'] = [*update_fields, 'renewing']
 
 
 class AgencyStateLicense(BaseModel):
@@ -39,6 +61,7 @@ class AgencyStateLicense(BaseModel):
     status = models.CharField(max_length=10, choices=LICENSE_STATUSES, default='active')
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
+    renewing = models.BooleanField(default=False, help_text='A renewal is under way; see renewal_open.')
     life = models.BooleanField(default=False, help_text='The licence covers life insurance.')
     health = models.BooleanField(default=False, help_text='The licence covers health insurance.')
 
@@ -78,4 +101,5 @@ class AgencyStateLicense(BaseModel):
         update_fields = kwargs.get('update_fields')
         if update_fields is not None and 'end_date' in update_fields and 'status' not in update_fields:
             kwargs['update_fields'] = [*update_fields, 'status']
+        clear_closed_renewal(self, kwargs)
         super().save(*args, **kwargs)

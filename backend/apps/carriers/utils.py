@@ -100,7 +100,7 @@ def sync_licenses(carrier, actor, wanted):
     longer listed loses its row (soft delete); a new state gets a row.
     """
     wanted_by_state = {item['state'].pk: item for item in wanted}
-    fields = ('license_number', 'status', 'start_date', 'end_date', 'life', 'health')
+    fields = ('license_number', 'status', 'start_date', 'end_date', 'renewing', 'life', 'health')
 
     for row in list(carrier.licenses.all()):
         item = wanted_by_state.pop(row.state_id, None)

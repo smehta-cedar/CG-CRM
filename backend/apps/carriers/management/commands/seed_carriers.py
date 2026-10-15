@@ -22,10 +22,11 @@ def license_row(state, row):
             'status': 'active',
             'start_date': None,
             'end_date': None,
+            'renewing': False,
             'life': False,
             'health': False,
         }
-    fields = ('license_number', 'status', 'start_date', 'end_date', 'life', 'health')
+    fields = ('license_number', 'status', 'start_date', 'end_date', 'renewing', 'life', 'health')
     return {'state': state, **{field: getattr(row, field) for field in fields}}
 
 

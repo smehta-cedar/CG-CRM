@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from django.urls import reverse
 from rest_framework.test import APITestCase
 
@@ -449,3 +451,18 @@ class RenameSuppAncillaryMigrationTests(CarrierAPITestCase):
         migration.rename_forward(apps, None)
         carrier.refresh_from_db()
         self.assertEqual(carrier.lines_of_business, ['Ancillary', 'MAPD'])
+
+
+class CarrierLicenseRenewalTests(CarrierAPITestCase):
+    def test_renewing_is_kept_inside_the_window_and_cleared_outside(self):
+        carrier = make_carrier(available_states=('TX',))
+        soon = (date.today() + timedelta(days=30)).isoformat()
+        later = (date.today() + timedelta(days=400)).isoformat()
+        for end, expected in ((soon, True), (later, False)):
+            response = self.client.patch(
+                self.detail_url(carrier),
+                {'licenses': [{'state': 'TX', 'end_date': end, 'renewing': True}]},
+                format='json',
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data['data']['licenses'][0]['renewing'], expected)

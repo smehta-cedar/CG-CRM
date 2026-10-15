@@ -12,7 +12,7 @@ class AgencyLicenseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AgencyStateLicense
-        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date', 'life', 'health')
+        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date', 'renewing', 'life', 'health')
         read_only_fields = fields
 
 
@@ -93,7 +93,16 @@ class AgencyLicenseInputSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         default=None,
-        help_text='Left out or null: a new row runs two years from its start and a kept row keeps its date.',
+        help_text='Left out or null: a new row has no end date and a kept row keeps its date.',
+    )
+    renewing = serializers.BooleanField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text=(
+            'A renewal is under way. Left out: off for a new row, unchanged for a kept one. '
+            'Cleared on save unless the end date is within 60 days or passed.'
+        ),
     )
     life = serializers.BooleanField(required=False, default=False, help_text='Covers life insurance.')
     health = serializers.BooleanField(required=False, default=False, help_text='Covers health insurance.')

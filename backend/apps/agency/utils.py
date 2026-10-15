@@ -24,10 +24,6 @@ NOTE_FIELDS = (
     'license_dates',
 )
 
-# How long a new licence runs from its start date, until the form asks for dates.
-LICENSE_TERM_YEARS = 2
-
-
 def get_agency_or_404(pk):
     return get_object_or_404(Agency.objects.prefetch_related('licenses__state'), pk=pk)
 
@@ -98,23 +94,25 @@ def sync_licenses(agency, actor, wanted, today=None):
     given and the status and dates as given (a None status or date leaves
     the row's alone); a state no longer listed loses its row (soft delete);
     a new state gets a row with the status given (active when None) and the
-    dates given, or starting today and running LICENSE_TERM_YEARS when they
-    are None.
+    dates given: starting today when the start is None, and with no end
+    date when the end is None.
     """
     today = today or date.today()
     wanted_by_state = {
-        state.pk: (state, number.strip(), bool(life), bool(health), status, start, end)
-        for state, number, life, health, status, start, end in wanted
+        state.pk: (state, number.strip(), bool(life), bool(health), status, start, end, renewing)
+        for state, number, life, health, status, start, end, renewing in wanted
     }
 
     for row in list(agency.licenses.all()):
         if row.state_id not in wanted_by_state:
             row.delete(user=actor)
             continue
-        _, number, life, health, status, start, end = wanted_by_state.pop(row.state_id)
+        _, number, life, health, status, start, end, renewing = wanted_by_state.pop(row.state_id)
         updates = {'license_number': number, 'life': life, 'health': health}
         if status is not None:
             updates['status'] = status
+        if renewing is not None:
+            updates['renewing'] = renewing
         if start is not None:
             updates['start_date'] = start
         if end is not None:
@@ -126,9 +124,8 @@ def sync_licenses(agency, actor, wanted, today=None):
             row.updated_by = actor
             row.save(update_fields=[*changed, 'updated_by'])
 
-    for state, number, life, health, status, start, end in wanted_by_state.values():
+    for state, number, life, health, status, start, end, renewing in wanted_by_state.values():
         start = start or today
-        end = end or start.replace(year=start.year + LICENSE_TERM_YEARS)
         AgencyStateLicense.objects.create(
             agency=agency,
             state=state,
@@ -138,6 +135,7 @@ def sync_licenses(agency, actor, wanted, today=None):
             status=status or 'active',
             start_date=start,
             end_date=end,
+            renewing=bool(renewing),
             created_by=actor,
             updated_by=actor,
         )

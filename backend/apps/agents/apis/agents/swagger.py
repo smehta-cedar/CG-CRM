@@ -35,7 +35,7 @@ agent_create = extend_schema(
     description=(
         'Records an "added" note listing every filled field. `licenses` creates one '
         'active licence row per state with the `start_date` / `end_date` given (today and '
-        'two years on when left out) and the `life` and `health` lines as given (both off '
+        'no end date when left out) and the `life` and `health` lines as given (both off '
         'unless sent).'
     ),
     request=AgentCreateSerializer,

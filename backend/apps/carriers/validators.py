@@ -62,6 +62,7 @@ LICENSE_DEFAULTS = {
     'status': 'active',
     'start_date': None,
     'end_date': None,
+    'renewing': False,
     'life': False,
     'health': False,
 }

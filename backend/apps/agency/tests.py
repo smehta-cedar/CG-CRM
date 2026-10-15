@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from django.urls import reverse
 from rest_framework.test import APITestCase
@@ -22,9 +22,8 @@ def make_agency(**overrides):
 
 
 def default_term():
-    """The dates a new licence row gets when none are sent: today, two years on."""
-    today = date.today()
-    return today, today.replace(year=today.year + 2)
+    """The dates a new licence row gets when none are sent: today, and no end date ("?" in notes)."""
+    return date.today(), '?'
 
 
 def make_role(**flags):
@@ -510,3 +509,16 @@ class AgencyCommentTests(AgencyAPITestCase):
         self.client.force_authenticate(staff)
         self.assertEqual(self.client.get(self.url).status_code, 200)
         self.assertEqual(self.client.post(self.url, {'body': 'Hi'}, format='json').status_code, 403)
+
+
+class AgencyLicenseRenewalTests(AgencyAPITestCase):
+    def test_renewing_is_kept_inside_the_window_and_left_alone_when_omitted(self):
+        agency = make_agency()
+        agency.licenses.create(state=State.objects.get(code='TX'), end_date=date.today() + timedelta(days=30))
+        response = self.client.patch(
+            self.detail_url(agency), {'licenses': [{'state': 'TX', 'renewing': True}]}, format='json'
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data['data']['licenses'][0]['renewing'])
+        response = self.client.patch(self.detail_url(agency), {'licenses': [{'state': 'TX'}]}, format='json')
+        self.assertTrue(response.data['data']['licenses'][0]['renewing'])

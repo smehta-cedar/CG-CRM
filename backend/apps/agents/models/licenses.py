@@ -1,7 +1,7 @@
 from django.db import models
 from django.utils import timezone
 
-from apps.agency.models import State
+from apps.agency.models import State, clear_closed_renewal
 from apps.base.models import BaseModel
 
 from .agents import Agent
@@ -39,6 +39,7 @@ class AgentStateLicense(BaseModel):
     status = models.CharField(max_length=10, choices=LICENSE_STATUSES, default='active')
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
+    renewing = models.BooleanField(default=False, help_text='A renewal is under way; see apps.agency.models.renewal_open.')
     life = models.BooleanField(default=False, help_text='The licence covers life insurance.')
     health = models.BooleanField(default=False, help_text='The licence covers health insurance.')
 
@@ -78,4 +79,5 @@ class AgentStateLicense(BaseModel):
         update_fields = kwargs.get('update_fields')
         if update_fields is not None and 'end_date' in update_fields and 'status' not in update_fields:
             kwargs['update_fields'] = [*update_fields, 'status']
+        clear_closed_renewal(self, kwargs)
         super().save(*args, **kwargs)

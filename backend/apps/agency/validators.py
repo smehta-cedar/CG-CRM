@@ -17,11 +17,12 @@ def ensure_name_free(name, exclude=None):
 
 
 def resolve_licenses(licenses):
-    """(State, number, life, health, status, start_date, end_date) tuples for a
-    list of {"state", "license_number", "life", "health", "status",
-    "start_date", "end_date"}; unknown codes are a 400 and a repeated state
-    keeps its last entry. A missing status or date is None: sync_licenses
-    defaults it for a new row and leaves it alone on a kept one."""
+    """(State, number, life, health, status, start_date, end_date, renewing)
+    tuples for a list of {"state", "license_number", "life", "health",
+    "status", "start_date", "end_date", "renewing"}; unknown codes are a 400
+    and a repeated state keeps its last entry. A missing status, date or
+    renewing is None: sync_licenses defaults it for a new row and leaves it
+    alone on a kept one."""
     if not licenses:
         return []
     wanted = {}
@@ -34,6 +35,7 @@ def resolve_licenses(licenses):
             item.get('status'),
             item.get('start_date'),
             item.get('end_date'),
+            item.get('renewing'),
         )
     states = {state.code: state for state in State.objects.filter(code__in=wanted)}
     unknown = sorted(set(wanted) - set(states))

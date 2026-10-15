@@ -19,7 +19,7 @@ class CarrierLicenseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CarrierStateLicense
-        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date', 'life', 'health')
+        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date', 'renewing', 'life', 'health')
         read_only_fields = fields
 
 
@@ -172,6 +172,11 @@ class LicenseInputSerializer(serializers.Serializer):
     start_date = serializers.DateField(required=False, allow_null=True, default=None, help_text='YYYY-MM-DD.')
     end_date = serializers.DateField(
         required=False, allow_null=True, default=None, help_text='YYYY-MM-DD. The expiration date.'
+    )
+    renewing = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text='A renewal is under way. Cleared on save unless the expiration date is within 60 days or passed.',
     )
     life = serializers.BooleanField(required=False, default=False, help_text='Covers life insurance.')
     health = serializers.BooleanField(required=False, default=False, help_text='Covers health insurance.')
