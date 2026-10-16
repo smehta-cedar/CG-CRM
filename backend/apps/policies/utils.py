@@ -140,7 +140,7 @@ def policy_snapshot(policy):
     Compare two of these to find what changed."""
     return {
         'name': policy.name,
-        'policy_type': policy.policy_type.name,
+        'policy_type': policy.policy_type.name if policy.policy_type else '',
         'carrier': policy.carrier.name,
         'available_states': ', '.join(policy.state_codes),
         'status': 'active' if policy.is_active else 'inactive',
@@ -233,13 +233,14 @@ def certification_snapshot(certification):
 
 
 def add_contract_certifications(agent, carrier, actor=None, due_date=None):
-    """Give `agent` one certification per line of business `carrier` writes,
-    due on `due_date` (default: the next deadline), and return the rows made
-    or filled in. Lines the agent already has with this carrier for that
-    deadline are skipped. A row with this carrier and no due date counts for
-    that deadline: one with a line just takes the date, one with no line
-    takes a missing line (and the date) before a new row is made. Each row
-    gets an "added" note, or "edited" for one filled in."""
+    """Give `agent` one certification per line `carrier` marks as needing
+    one (`certification_lines`), due on `due_date` (default: the next
+    deadline), and return the rows made or filled in. Lines the agent
+    already has with this carrier for that deadline are skipped. A row
+    with this carrier and no due date counts for that deadline: one with
+    a line just takes the date, one with no line takes a missing line
+    (and the date) before a new row is made. Each row gets an "added"
+    note, or "edited" for one filled in."""
     due_date = due_date or certification_due_date()
     rows = list(
         Certification.objects.filter(agent=agent, carrier=carrier)
@@ -267,7 +268,7 @@ def add_contract_certifications(agent, carrier, actor=None, due_date=None):
 
     have = {row.line_of_business for row in rows if row.line_of_business}
     blank = [row for row in rows if not row.line_of_business]
-    for line in carrier.lines_of_business:
+    for line in carrier.certification_lines:
         if line in have:
             continue
         if blank:

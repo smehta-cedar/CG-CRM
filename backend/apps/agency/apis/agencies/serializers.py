@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.agency.models import LICENSE_STATUSES, Agency, AgencyNote, AgencyStateLicense
+from apps.agency.models import Agency, AgencyComment, AgencyNote, AgencyStateLicense, LICENSE_STATUSES
 from apps.agency.utils import normalize_aliases
 
 
@@ -8,11 +8,11 @@ class AgencyLicenseSerializer(serializers.ModelSerializer):
     """One licence row as it appears on the agency."""
 
     state = serializers.CharField(source='state.code', read_only=True)
-    status = serializers.ChoiceField(choices=LICENSE_STATUSES, read_only=True)
+    status = serializers.ChoiceField(choices=LICENSE_STATUSES, source='current_status', read_only=True)
 
     class Meta:
         model = AgencyStateLicense
-        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date')
+        fields = ('id', 'state', 'license_number', 'status', 'start_date', 'end_date', 'renewing', 'life', 'health')
         read_only_fields = fields
 
 
@@ -93,8 +93,19 @@ class AgencyLicenseInputSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         default=None,
-        help_text='Left out or null: a new row runs two years from its start and a kept row keeps its date.',
+        help_text='Left out or null: a new row has no end date and a kept row keeps its date.',
     )
+    renewing = serializers.BooleanField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text=(
+            'A renewal is under way. Left out: off for a new row, unchanged for a kept one. '
+            'Cleared on save unless the end date is within 60 days or passed.'
+        ),
+    )
+    life = serializers.BooleanField(required=False, default=False, help_text='Covers life insurance.')
+    health = serializers.BooleanField(required=False, default=False, help_text='Covers health insurance.')
 
     def validate(self, data):
         start, end = data.get('start_date'), data.get('end_date')
@@ -143,6 +154,11 @@ class AgencyCreateSerializer(serializers.Serializer):
         return normalize_aliases(value)
 
 
+class AgentLicenseInputSerializer(serializers.Serializer):
+    state = serializers.CharField(min_length=2, max_length=2, help_text='Two-letter state code.')
+    agents = serializers.ListField(child=serializers.UUIDField(), help_text='Agents to license in the state.')
+
+
 class AgencyUpdateSerializer(serializers.Serializer):
     """Send only the fields that change."""
 
@@ -153,6 +169,14 @@ class AgencyUpdateSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     licenses = _licenses_field()
     is_active = serializers.BooleanField(required=False)
+    agent_licenses = serializers.ListField(
+        child=AgentLicenseInputSerializer(),
+        required=False,
+        help_text=(
+            'Agents to license in a state, each with a pending licence and no number or dates. Agents '
+            'already licensed there are skipped. Needs the agents update permission.'
+        ),
+    )
 
     def validate_aliases(self, value):
         return normalize_aliases(value)
@@ -169,3 +193,23 @@ class AgencyListQuerySerializer(serializers.Serializer):
         allow_null=True,
         help_text='true for operating agencies, false for switched-off ones.',
     )
+
+
+class AgencyCommentSerializer(serializers.ModelSerializer):
+    """One note written on the agency."""
+
+    agency_id = serializers.UUIDField(read_only=True)
+    created_by = serializers.SerializerMethodField(help_text='The full name of who wrote it.')
+
+    class Meta:
+        model = AgencyComment
+        fields = ('id', 'agency_id', 'body', 'created_by', 'created_at')
+        read_only_fields = fields
+
+    def get_created_by(self, comment) -> str | None:
+        user = comment.created_by
+        return user.full_name if user else None
+
+
+class AgencyCommentCreateSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=5000, help_text='The note; surrounding spaces are dropped.')

@@ -12,7 +12,7 @@ from apps.contracts.models import (
 # apps.contracts.validators instead.
 
 # The order a note lists changed fields in.
-NOTE_FIELDS = ('agent', 'carrier', 'writing_number', 'appointed_states')
+NOTE_FIELDS = ('agent', 'carrier', 'writing_number', 'status', 'appointed_states')
 
 
 def get_contract_or_404(pk):
@@ -61,6 +61,7 @@ def snapshot(contract):
         'agent': contract.agent.name,
         'carrier': contract.carrier.name,
         'writing_number': contract.writing_number,
+        'status': contract.status,
         'appointed_states': ', '.join(contract.state_codes),
     }
 
@@ -99,14 +100,14 @@ AGENCY_NOTE_FIELDS = ('carrier', 'contract_number', 'policy_types', 'status')
 
 
 def numbered_agency_contracts():
-    """Live agency contracts that have a contract number: the ones that open
-    their carrier to agents."""
-    return AgencyCarrierContract.objects.exclude(contract_number='')
+    """Live agency contracts that are active and have a contract number: the
+    ones that open their carrier to agents."""
+    return AgencyCarrierContract.objects.filter(status='active').exclude(contract_number='')
 
 
 def with_agent_access(carriers):
     """`carriers` annotated with agent_accessible: true only when the carrier's
-    live agency contract has a contract number."""
+    live agency contract is active and has a contract number."""
     return carriers.annotate(
         agent_accessible=Exists(numbered_agency_contracts().filter(carrier=OuterRef('pk')))
     )
@@ -142,12 +143,12 @@ def save_agency_contract(contract, actor, policy_types=None, **fields):
 
 def agency_snapshot(contract):
     """The contract's fields as a note shows them: the carrier by name,
-    policy types as names joined with ", ", the status as active / inactive."""
+    policy types as names joined with ", ", the status as stored."""
     return {
         'carrier': contract.carrier.name,
         'contract_number': contract.contract_number,
         'policy_types': ', '.join(contract.policy_type_names),
-        'status': 'active' if contract.is_active else 'inactive',
+        'status': contract.status,
     }
 
 

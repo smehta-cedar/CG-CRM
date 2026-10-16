@@ -1,6 +1,7 @@
 from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 
 from apps.agents.models import Agent, AgentNote
@@ -10,9 +11,10 @@ from apps.agents.utils import (
     filter_agents,
     get_agent_or_404,
     normalize_email,
-    normalize_name,
     normalize_npn,
     record_note,
+    resolve_name,
+    resolve_status,
     save_agent,
     search_agents,
     snapshot,
@@ -70,6 +72,7 @@ def agent_list(request):
     agents = filter_agents(
         agents,
         is_active=filters.get('is_active'),
+        status=filters.get('status'),
         state=filters.get('state'),
     )
 
@@ -87,7 +90,8 @@ def agent_create(request):
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
 
-    name = normalize_name(data['name'])
+    names = resolve_name(dict(data))
+    name = names['name']
     npn = normalize_npn(data['npn'])
     ensure_name_free(name)
     ensure_npn_free(npn)
@@ -99,6 +103,8 @@ def agent_create(request):
     with transaction.atomic():
         agent = Agent.objects.create(
             name=name,
+            first_name=names['first_name'],
+            last_name=names['last_name'],
             aliases=data.get('aliases', []),
             npn=npn,
             email=email,
@@ -109,7 +115,8 @@ def agent_create(request):
             join_date=data.get('join_date'),
             start_date=data.get('start_date'),
             ssn_last4=data.get('ssn_last4', ''),
-            is_active=data.get('is_active', True),
+            remarks=data.get('remarks', ''),
+            status=resolve_status(dict(data)).get('status', 'active'),
             created_by=request.user,
             updated_by=request.user,
             **address,
@@ -138,8 +145,10 @@ def agent_detail(request, pk):
         fields = dict(serializer.validated_data)
 
         # The name and NPN only have to be free when they are actually changing.
+        resolve_name(fields, agent)
+        if 'name' in fields and not fields['name']:
+            raise ValidationError({'first_name': ['Enter the first name.']})
         if 'name' in fields:
-            fields['name'] = normalize_name(fields['name'])
             if fields['name'].lower() != agent.name.lower():
                 ensure_name_free(fields['name'], exclude=agent)
 
@@ -157,7 +166,9 @@ def agent_detail(request, pk):
             if field in fields:
                 fields[field] = fields[field].strip()
 
-        # date_of_birth, join_date, start_date and ssn_last4 go in as validated.
+        # date_of_birth, join_date, start_date, ssn_last4 and remarks go in as validated.
+
+        resolve_status(fields, current=agent.status)
 
         if 'address' in fields:
             fields.update(_address_columns(fields.pop('address')))

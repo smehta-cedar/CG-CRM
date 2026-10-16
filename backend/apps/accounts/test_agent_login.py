@@ -20,10 +20,10 @@ def make_agent(**overrides):
     return Agent.objects.create(**fields)
 
 
-def make_agent_role(*sections, extra=()):
-    """The role every agent account uses, granting view on these agent_view sections and `extra` modules."""
-    role = Role.objects.create(name='Agent')
-    for module in [f'agent_view.{section}' for section in sections] + list(extra):
+def make_agent_role(*modules):
+    """The role every agent account uses, granting view on these modules."""
+    role = Role.objects.get(name='Agent')  # built in
+    for module in modules:
         RolePermission.objects.create(role=role, module=module, can_view=True)
     return role
 
@@ -38,9 +38,6 @@ class AgentAuthTestCase(APITestCase):
 
     def login_url(self):
         return reverse('accounts:apis:auth:agent-login')
-
-    def home_url(self):
-        return reverse('accounts:apis:auth:agent')
 
     def request_code(self, email):
         return self.client.post(self.code_url(), {'email': email}, format='json')
@@ -66,7 +63,7 @@ class AgentCodeRequestTests(AgentAuthTestCase):
         sent = self.request_code('nobody@example.com')
         make_agent(name='Shared One', npn='10000006', email='shared@example.com')
         make_agent(name='Shared Two', npn='10000007', email='shared@example.com')
-        make_agent(name='Inactive', npn='10000008', email='inactive@example.com', is_active=False)
+        make_agent(name='Inactive', npn='10000008', email='inactive@example.com', status='inactive')
         User.objects.create_user(email='staff@example.com', password='Sup3r-secret!', full_name='Staff')
         make_agent(name='Staff Email', npn='10000009', email='staff@example.com')
         replies = [
@@ -140,7 +137,7 @@ class AgentLoginTests(AgentAuthTestCase):
     def test_agent_made_inactive_after_the_email_is_blocked(self):
         agent = make_agent()
         self.request_code('maria.alvarez@example.com')
-        agent.is_active = False
+        agent.status = 'inactive'
         agent.save()
         response = self.sign_in('maria.alvarez@example.com', self.emailed_code())
         self.assertEqual(response.status_code, 403)
@@ -153,54 +150,8 @@ class AgentLoginTests(AgentAuthTestCase):
         self.client.force_authenticate(user)
         return user
 
-    def test_home_is_this_agent_only(self):
-        make_agent_role('profile', 'licenses', 'contracts', 'certifications', 'passwords')
-        agent = make_agent()
-        other = make_agent(name='Other Agent', npn='10000009', email='other@example.com')
-        self.request_code(agent.email)
-        self.sign_in(agent.email, self.emailed_code())
-        user = User.objects.get(agent=agent)
-        self.client.force_authenticate(user)
-        response = self.client.get(self.home_url())
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data['data']['agent']['id'], str(agent.pk))
-        self.assertEqual(response.data['data']['contracts'], [])
-        self.assertEqual(response.data['data']['certifications'], [])
-        self.assertNotEqual(response.data['data']['agent']['id'], str(other.pk))
-
-    def test_home_leaves_out_sections_the_agent_role_does_not_grant(self):
-        make_agent_role('contracts')
-        agent = make_agent(phone='5551234567')
-        self.signed_in_agent(agent)
-        data = self.client.get(self.home_url()).data['data']
-        self.assertEqual(
-            data['sections'],
-            {'profile': False, 'licenses': False, 'contracts': True, 'certifications': False, 'passwords': False},
-        )
-        self.assertEqual(data['agent']['name'], agent.name)
-        self.assertEqual(data['agent']['npn'], '')
-        self.assertEqual(data['agent']['phone'], '')
-        self.assertEqual(data['agent']['licenses'], [])
-        self.assertEqual(data['contracts'], [])
-        self.assertIsNone(data['certifications'])
-        self.assertIsNone(data['passwords'])
-
-    def test_without_an_agent_role_the_home_shows_nothing(self):
-        agent = make_agent()
-        self.signed_in_agent(agent)
-        data = self.client.get(self.home_url()).data['data']
-        self.assertFalse(any(data['sections'].values()))
-        self.assertIsNone(data['contracts'])
-
-    def test_agent_role_grants_no_staff_modules_to_an_agent(self):
-        make_agent_role('profile', extra=('passwords', 'users'))
+    def test_agent_role_grants_sidebar_links_to_an_agent(self):
+        make_agent_role('passwords')
         user = self.signed_in_agent(make_agent())
-        self.assertTrue(user.has_permission('agent_view.profile'))
-        self.assertFalse(user.has_permission('passwords'))
+        self.assertTrue(user.has_permission('passwords'))
         self.assertFalse(user.has_permission('users'))
-
-    def test_staff_home_is_not_found(self):
-        staff = User.objects.create_user(email='staff@example.com', password='Sup3r-secret!', full_name='Staff')
-        self.client.force_authenticate(staff)
-        response = self.client.get(self.home_url())
-        self.assertEqual(response.status_code, 404)

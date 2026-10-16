@@ -1,6 +1,6 @@
 from django.db import models
 
-from apps.agency.models import LICENSE_STATUSES, State
+from apps.agency.models import LICENSE_STATUSES, State, clear_closed_renewal
 from apps.base.models import BaseModel
 
 from .carriers import Carrier
@@ -26,6 +26,7 @@ class CarrierStateLicense(BaseModel):
     start_date = models.DateField(null=True, blank=True)
     # The expiration date.
     end_date = models.DateField(null=True, blank=True)
+    renewing = models.BooleanField(default=False, help_text='A renewal is under way; see apps.agency.models.renewal_open.')
     life = models.BooleanField(default=False, help_text='Covers life insurance in this state.')
     health = models.BooleanField(default=False, help_text='Covers health insurance in this state.')
 
@@ -51,4 +52,5 @@ class CarrierStateLicense(BaseModel):
 
     def save(self, *args, **kwargs):
         self.license_number = self.license_number.strip()
+        clear_closed_renewal(self, kwargs)
         super().save(*args, **kwargs)

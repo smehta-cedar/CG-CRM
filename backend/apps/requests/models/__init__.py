@@ -1,3 +1,4 @@
 from .requests import REQUEST_STATUSES, REQUEST_TYPES, Request
+from .tasks import TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES, Task
 
-__all__ = ['REQUEST_STATUSES', 'REQUEST_TYPES', 'Request']
+__all__ = ['REQUEST_STATUSES', 'REQUEST_TYPES', 'Request', 'TASK_PRIORITIES', 'TASK_STATUSES', 'TASK_TYPES', 'Task']

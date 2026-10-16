@@ -4,6 +4,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from apps.agents.models import Agent, AgentNote, AgentStateLicense
+from apps.agents.models.agents import split_name
 
 # Helpers the agent views share. Checks that can reject a request live in
 # apps.agents.validators instead.
@@ -23,8 +24,10 @@ NOTE_FIELDS = (
     'join_date',
     'start_date',
     'ssn_last4',
+    'remarks',
     'licensed_states',
     'license_numbers',
+    'license_statuses',
     'license_lines',
     'license_dates',
 )
@@ -33,16 +36,31 @@ NOTE_FIELDS = (
 MASKED_NOTE_FIELDS = ('ssn_last4',)
 NOTE_MASK = '••••'
 
-# How long a new licence runs from its start date when the form sends no end date.
-LICENSE_TERM_YEARS = 2
-
-
 def get_agent_or_404(pk):
     return get_object_or_404(Agent.objects.prefetch_related('licenses__state'), pk=pk)
 
 
 def normalize_name(name):
     return ' '.join(name.split())
+
+
+NAME_PARTS = ('first_name', 'last_name')
+
+
+def resolve_name(fields, agent=None):
+    """Set `name` and the three parts in `fields` together, from whichever
+    were sent: parts (merged over the agent's own) build the name, a lone
+    name is split. Nothing name-related sent leaves `fields` alone."""
+    sent = [part for part in NAME_PARTS if part in fields]
+    if sent:
+        parts = {part: normalize_name(fields.get(part, getattr(agent, part, '') if agent else '')) for part in NAME_PARTS}
+    elif 'name' in fields:
+        parts = dict(zip(NAME_PARTS, split_name(normalize_name(fields['name']))))
+    else:
+        return fields
+    fields.update(parts)
+    fields['name'] = ' '.join(parts[part] for part in NAME_PARTS if parts[part])
+    return fields
 
 
 def normalize_npn(npn):
@@ -105,16 +123,34 @@ def search_agents(agents, search):
     )
 
 
-def filter_agents(agents, is_active=None, state=None):
-    """Narrow `agents` by is_active and by a licensed state code; None means no filter."""
+def filter_agents(agents, is_active=None, status=None, state=None):
+    """Narrow `agents` by is_active, status and a licensed state code; None means no filter."""
     if is_active is not None:
         agents = agents.filter(is_active=is_active)
+    if status:
+        agents = agents.filter(status=status)
     if state:
         agents = agents.filter(
             licenses__state__code=state.upper(),
             licenses__deleted_at__isnull=True,
         ).distinct()
     return agents
+
+
+def resolve_status(fields, current='active'):
+    """Fill in `status` and `is_active` together from whichever was sent.
+
+    status wins; is_active alone sets inactive, or active when the current
+    status was inactive (an onboarding or SDR agent stays as they were).
+    """
+    if 'status' in fields:
+        fields['is_active'] = fields['status'] != 'inactive'
+    elif 'is_active' in fields:
+        if not fields['is_active']:
+            fields['status'] = 'inactive'
+        else:
+            fields['status'] = 'active' if current == 'inactive' else current
+    return fields
 
 
 def save_agent(agent, actor, **fields):
@@ -128,26 +164,32 @@ def save_agent(agent, actor, **fields):
 
 def sync_licenses(agent, actor, wanted, today=None):
     """Make the agent's licence rows match `wanted`, a list of
-    (State, number, life, health, start_date, end_date).
+    (State, number, life, health, start_date, end_date, status); status may
+    be left off.
 
     A state already licensed keeps its row, with the number, lines and any
-    dates as given (a None date leaves the row's date alone); a state no
-    longer listed loses its row (soft delete); a new state gets an active
-    row with the dates given, or starting today and running
-    LICENSE_TERM_YEARS when they are None. Statuses are untouched.
+    dates and status as given (None leaves the row's own alone); a state no
+    longer listed loses its row (soft delete); a new state gets a row with
+    the status given (active when None) and the dates given, or starting
+    today when the start is None, and with no end date when the end is None.
     """
     today = today or date.today()
-    wanted_by_state = {
-        state.pk: (state, number.strip(), bool(life), bool(health), start, end)
-        for state, number, life, health, start, end in wanted
-    }
+    wanted_by_state = {}
+    for state, number, life, health, start, end, *rest in wanted:
+        status = rest[0] if rest else None
+        renewing = rest[1] if len(rest) > 1 else None
+        wanted_by_state[state.pk] = (state, number.strip(), bool(life), bool(health), start, end, status, renewing)
 
     for row in list(agent.licenses.all()):
         if row.state_id not in wanted_by_state:
             row.delete(user=actor)
             continue
-        _, number, life, health, start, end = wanted_by_state.pop(row.state_id)
+        _, number, life, health, start, end, status, renewing = wanted_by_state.pop(row.state_id)
         updates = {'license_number': number, 'life': life, 'health': health}
+        if status is not None:
+            updates['status'] = status
+        if renewing is not None:
+            updates['renewing'] = renewing
         if start is not None:
             updates['start_date'] = start
         if end is not None:
@@ -159,18 +201,18 @@ def sync_licenses(agent, actor, wanted, today=None):
             row.updated_by = actor
             row.save(update_fields=[*changed, 'updated_by'])
 
-    for state, number, life, health, start, end in wanted_by_state.values():
+    for state, number, life, health, start, end, status, renewing in wanted_by_state.values():
         start = start or today
-        end = end or start.replace(year=start.year + LICENSE_TERM_YEARS)
         AgentStateLicense.objects.create(
             agent=agent,
             state=state,
             license_number=number,
             life=life,
             health=health,
-            status='active',
+            status=status or 'active',
             start_date=start,
             end_date=end,
+            renewing=bool(renewing),
             created_by=actor,
             updated_by=actor,
         )
@@ -183,7 +225,7 @@ def snapshot(agent):
     return {
         'name': agent.name,
         'aliases': ', '.join(agent.aliases),
-        'status': 'active' if agent.is_active else 'inactive',
+        'status': agent.status,
         'npn': agent.npn,
         'email': agent.email,
         'phone': agent.phone,
@@ -195,10 +237,12 @@ def snapshot(agent):
         'start_date': str(agent.start_date or ''),
         # The real digits, so a change is seen; diff_snapshots masks them.
         'ssn_last4': agent.ssn_last4,
+        'remarks': agent.remarks,
         'licensed_states': ', '.join(row.state.code for row in licenses),
         'license_numbers': ', '.join(
             f'{row.state.code} {row.license_number}' for row in licenses if row.license_number
         ),
+        'license_statuses': ', '.join(f'{row.state.code} {row.status}' for row in licenses),
         # "FL Health, TX Life & Health": only the states with a line ticked.
         'license_lines': ', '.join(
             f'{row.state.code} {row.lines_text}' for row in licenses if row.lines_text
@@ -239,3 +283,22 @@ def record_note(agent, actor, kind, changes):
         created_by=actor,
         updated_by=actor,
     )
+
+
+def add_pending_license(agent, state, actor=None):
+    """Give `agent` a pending licence in `state`, with no number or dates
+    to fill in once the state issues it, and an "edited" note. Called when
+    the agency licences a state for its agents. Does nothing when the agent
+    already has a live row there. Returns the new row, or None."""
+    if agent.licenses.filter(state=state).exists():
+        return None
+    before = snapshot(get_agent_or_404(agent.pk))
+    row = AgentStateLicense.objects.create(
+        agent=agent,
+        state=state,
+        status='pending',
+        created_by=actor,
+        updated_by=actor,
+    )
+    record_note(agent, actor, AgentNote.KIND_EDITED, diff_snapshots(before, snapshot(get_agent_or_404(agent.pk))))
+    return row

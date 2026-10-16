@@ -3,10 +3,12 @@ from rest_framework.test import APITestCase
 
 from apps.accounts.models import Role, RolePermission, User
 from apps.agency.models import Agency
+from apps.agents.models import Agent
 from apps.carriers.models import Carrier
+from apps.passwords.models import Password
 from apps.policies.models import PolicyType
 
-from .models import AgencyCarrierContract, AgencyCarrierContractNote
+from .models import AgencyCarrierContract, AgencyCarrierContractNote, CarrierContract
 
 
 def make_role(module, **flags):
@@ -60,7 +62,7 @@ class AgencyContractCreateTests(AgencyContractAPITestCase):
             ['Medicare Advantage', 'Medicare Supplement'],
         )
         self.assertNotIn('password', data)
-        self.assertTrue(data['is_active'])
+        self.assertEqual(data['status'], 'active')
         note = AgencyCarrierContractNote.objects.get(contract_id=data['id'])
         self.assertEqual(note.kind, 'added')
         self.assertEqual(
@@ -73,12 +75,12 @@ class AgencyContractCreateTests(AgencyContractAPITestCase):
             ],
         )
 
-    def test_blank_contract_number_and_no_policy_types_are_allowed(self):
-        response = self.client.post(
-            self.create_url(),
-            {'agency': str(self.agency.pk), 'carrier': str(self.carrier.pk), 'contract_number': ''},
-            format='json',
-        )
+    def test_blank_contract_number_and_no_policy_types_are_allowed_unless_active(self):
+        body = {'agency': str(self.agency.pk), 'carrier': str(self.carrier.pk), 'contract_number': ''}
+        response = self.client.post(self.create_url(), body, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['errors']['contract_number'], ['Enter the contract number for an active contract.'])
+        response = self.client.post(self.create_url(), {**body, 'status': 'pending'}, format='json')
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data['data']['policy_types'], [])
 
@@ -92,18 +94,22 @@ class AgencyContractCreateTests(AgencyContractAPITestCase):
         self.make_contract().delete()
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 201)
 
-    def test_rejects_unknown_policy_type(self):
+    def test_ignores_unknown_policy_type(self):
         response = self.client.post(
-            self.create_url(), {**self.sample, 'policy_types': [str(self.carrier.pk)]}, format='json'
+            self.create_url(),
+            {**self.sample, 'policy_types': [str(self.carrier.pk), str(self.advantage.pk)]},
+            format='json',
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data['errors']['policy_types'], ['Unknown policy type.'])
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            [policy_type['name'] for policy_type in response.data['data']['policy_types']], ['Medicare Advantage']
+        )
 
     def test_edit_note_lists_only_changes(self):
         contract = self.make_contract(contract_number='X1')
         response = self.client.patch(
             self.detail_url(contract),
-            {'contract_number': '', 'is_active': False},
+            {'contract_number': '', 'status': 'cancelled'},
             format='json',
         )
         self.assertEqual(response.status_code, 200, response.data)
@@ -111,7 +117,7 @@ class AgencyContractCreateTests(AgencyContractAPITestCase):
             contract.notes.get().changes,
             [
                 {'field': 'contract_number', 'from': 'X1', 'to': ''},
-                {'field': 'status', 'from': 'active', 'to': 'inactive'},
+                {'field': 'status', 'from': 'active', 'to': 'cancelled'},
             ],
         )
 
@@ -145,6 +151,14 @@ class AgencyContractCreateTests(AgencyContractAPITestCase):
 
 
 class CarrierAgentAccessTests(AgencyContractAPITestCase):
+    def test_only_an_active_contract_opens_the_carrier(self):
+        contract = self.make_contract(contract_number='N1', status='pending')
+        self.assertFalse(self.accessible()['Humana'])
+        contract.status = 'active'
+        contract.save()
+        self.assertTrue(self.accessible()['Humana'])
+        self.assertTrue(AgencyCarrierContract.objects.get(pk=contract.pk).is_active)
+
     def accessible(self):
         response = self.client.get(reverse('carriers:apis:carriers:list'))
         return {row['name']: row['agent_accessible'] for row in response.data['data']}
@@ -170,6 +184,57 @@ class AgencyContractPermissionTests(AgencyContractAPITestCase):
         self.assertEqual(self.client.get(self.list_url()).status_code, 403)
 
     def test_view_only_role_can_list_but_not_create(self):
-        self.staff.roles.set([make_role('agency_contracts', can_view=True)])
+        self.staff.roles.set([make_role('agencies', can_view=True)])
         self.assertEqual(self.client.get(self.list_url()).status_code, 200)
         self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 403)
+
+
+class AgencyContractAppointAgentsTests(AgencyContractAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.ann = Agent.objects.create(name='Ann Lee', npn='111')
+        self.bob = Agent.objects.create(name='Bob Ray', npn='222')
+
+    def test_create_appoints_each_agent_pending_with_note_and_password(self):
+        response = self.client.post(
+            self.create_url(), {**self.sample, 'agents': [str(self.ann.pk), str(self.bob.pk)]}, format='json'
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        contracts = CarrierContract.objects.filter(carrier=self.carrier).order_by('agent__name')
+        self.assertEqual([(c.agent.name, c.status, c.writing_number) for c in contracts], [
+            ('Ann Lee', 'pending', ''),
+            ('Bob Ray', 'pending', ''),
+        ])
+        self.assertTrue(all(contract.notes.filter(kind='added').exists() for contract in contracts))
+        self.assertEqual(Password.objects.filter(carrier=self.carrier, agent__isnull=False).count(), 2)
+
+    def test_edit_skips_agents_already_appointed(self):
+        contract = self.make_contract(contract_number='HUM-001')
+        CarrierContract.objects.create(agent=self.ann, carrier=self.carrier, writing_number='W1', status='active')
+        response = self.client.patch(
+            self.detail_url(contract), {'agents': [str(self.ann.pk), str(self.bob.pk)]}, format='json'
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(CarrierContract.objects.get(agent=self.ann, carrier=self.carrier).status, 'active')
+        self.assertEqual(CarrierContract.objects.get(agent=self.bob, carrier=self.carrier).status, 'pending')
+
+    def test_agents_need_an_active_contract(self):
+        response = self.client.post(
+            self.create_url(), {**self.sample, 'status': 'pending', 'agents': [str(self.ann.pk)]}, format='json'
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('agents', response.data['errors'])
+        self.assertFalse(AgencyCarrierContract.objects.exists())
+
+    def test_unknown_agent_is_a_400(self):
+        response = self.client.post(self.create_url(), {**self.sample, 'agents': [str(self.carrier.pk)]}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['errors']['agents'], ['Unknown agent.'])
+
+    def test_agents_need_contracts_create_permission(self):
+        staff = User.objects.create_user(email='staff@example.com', password='Sup3r-secret!', full_name='Staff')
+        staff.roles.set([make_role('agencies', can_view=True, can_create=True)])
+        self.client.force_authenticate(staff)
+        response = self.client.post(self.create_url(), {**self.sample, 'agents': [str(self.ann.pk)]}, format='json')
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(CarrierContract.objects.exists())

@@ -29,7 +29,7 @@ from .serializers import (
     ProductUpdateSerializer,
 )
 
-CAN_MANAGE_STOREFRONT = module_permission('storefront')
+CAN_MANAGE_STOREFRONT = module_permission('storefront.products')
 
 
 @swagger.catalog

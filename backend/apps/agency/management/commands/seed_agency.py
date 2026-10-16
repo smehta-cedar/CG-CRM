@@ -71,6 +71,8 @@ class Command(BaseCommand):
                     state=states_by_code[code],
                     defaults={
                         'license_number': item.get('licenseNumber', ''),
+                        'life': bool(item.get('life')),
+                        'health': bool(item.get('health')),
                         'status': status if status in KNOWN_STATUSES else 'active',
                         'start_date': date.fromisoformat(item['startDate']) if item.get('startDate') else None,
                         'end_date': date.fromisoformat(item['endDate']) if item.get('endDate') else None,

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from apps.accounts.models import Designation, Role, User, UserNote
-from apps.accounts.models.roles import ACTIONS, PERMISSION_LABELS
+from apps.accounts.models.roles import ACTIONS, PERMISSION_LABELS, SECTIONS
 
 
 class RoleSummarySerializer(serializers.ModelSerializer):
@@ -59,7 +59,8 @@ class MeSerializer(UserSerializer):
 
     def get_permissions(self, user) -> dict[str, dict[str, bool]]:
         permissions = {}
-        for module in PERMISSION_LABELS:
+        # Sections too ("agents"), so a page shared by sub-links can check any of them.
+        for module in (*PERMISSION_LABELS, *SECTIONS):
             flags = {action: user.has_permission(module, action) for action in ACTIONS}
             if any(flags.values()):
                 permissions[module] = flags

@@ -1,19 +1,21 @@
 from django.db import models
+from django.utils import timezone
 
-from apps.agency.models import State
+from apps.agency.models import State, clear_closed_renewal
 from apps.base.models import BaseModel
 
 from .agents import Agent
 
-# active: licence in force. review: renewal or paperwork under review.
-# pending: applied for, not issued yet. jit: "just in time", obtained only
-# when a sale there needs it.
+# active: licence in force. applied: the application is in. pending: applied
+# for, not issued yet. expired: the end date has passed (set from the date on
+# save, and reported from it on read; see current_status).
 LICENSE_STATUSES = (
     ('active', 'Active'),
-    ('review', 'Review'),
+    ('applied', 'Applied'),
     ('pending', 'Pending'),
-    ('jit', 'JIT'),
+    ('expired', 'Expired'),
 )
+
 
 
 class AgentStateLicense(BaseModel):
@@ -37,8 +39,17 @@ class AgentStateLicense(BaseModel):
     status = models.CharField(max_length=10, choices=LICENSE_STATUSES, default='active')
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
+    renewing = models.BooleanField(default=False, help_text='A renewal is under way; see apps.agency.models.renewal_open.')
     life = models.BooleanField(default=False, help_text='The licence covers life insurance.')
     health = models.BooleanField(default=False, help_text='The licence covers health insurance.')
+
+    @property
+    def current_status(self):
+        """The status as of today: a row whose end date passed since it was
+        saved reads as expired."""
+        if self.end_date and self.end_date < timezone.localdate():
+            return 'expired'
+        return self.status
 
     @property
     def lines_text(self):
@@ -62,4 +73,11 @@ class AgentStateLicense(BaseModel):
 
     def save(self, *args, **kwargs):
         self.license_number = self.license_number.strip()
+        if self.end_date and self.end_date < timezone.localdate():
+            self.status = 'expired'
+        # The status follows the end date, so it is saved whenever the date is.
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None and 'end_date' in update_fields and 'status' not in update_fields:
+            kwargs['update_fields'] = [*update_fields, 'status']
+        clear_closed_renewal(self, kwargs)
         super().save(*args, **kwargs)

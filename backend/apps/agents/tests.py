@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from django.urls import reverse
 from rest_framework.test import APITestCase
@@ -39,14 +39,14 @@ def make_agent(**overrides):
             life=item.get('life', False),
             health=item.get('health', False),
             start_date=date(2024, 1, 1),
-            end_date=date(2026, 1, 1),
+            end_date=date(2030, 1, 1),
         )
     return agent
 
 
 def make_role(**flags):
     role = Role.objects.create(name=f"agents-{'-'.join(k for k, v in flags.items() if v) or 'none'}")
-    RolePermission.objects.create(role=role, module='agents', **flags)
+    RolePermission.objects.create(role=role, module='agents.list', **flags)
     return role
 
 
@@ -77,12 +77,12 @@ class AgentCreateTests(AgentAPITestCase):
         self.assertEqual(data['npn'], '17654321')
         self.assertEqual(data['address'], SAMPLE['address'])
         self.assertEqual(data['personal_phone'], '')
-        # Licences come back in state-code order, active, running two years from today.
+        # Licences come back in state-code order, active, from today with no end date.
         self.assertEqual([row['state'] for row in data['licenses']], ['FL', 'TX'])
         self.assertEqual(data['licenses'][1]['license_number'], '2104587')
         self.assertEqual(data['licenses'][1]['status'], 'active')
         self.assertEqual(data['licenses'][1]['start_date'], date.today().isoformat())
-        self.assertEqual(data['licenses'][1]['end_date'][:4], str(date.today().year + 2))
+        self.assertIsNone(data['licenses'][1]['end_date'])
         self.assertTrue(data['is_active'])
 
     def test_records_an_added_note(self):
@@ -92,17 +92,16 @@ class AgentCreateTests(AgentAPITestCase):
         fields = [change['field'] for change in note.changes]
         self.assertEqual(
             fields,
-            ['name', 'aliases', 'status', 'npn', 'email', 'phone', 'personal_email', 'address', 'licensed_states', 'license_numbers', 'license_dates'],
+            ['name', 'aliases', 'status', 'npn', 'email', 'phone', 'personal_email', 'address', 'licensed_states', 'license_numbers', 'license_statuses', 'license_dates'],
         )
         by_field = {change['field']: change['to'] for change in note.changes}
         self.assertEqual(by_field['address'], '1420 Cedar Grove Ln, Austin, TX 78704')
         self.assertEqual(by_field['licensed_states'], 'FL, TX')
         self.assertEqual(by_field['license_numbers'], 'FL W482913, TX 2104587')
 
-    def test_name_and_npn_are_required(self):
+    def test_npn_is_required(self):
         response = self.client.post(self.create_url(), {}, format='json')
         self.assertEqual(response.status_code, 400)
-        self.assertIn('name', response.data['errors'])
         self.assertIn('npn', response.data['errors'])
 
     def test_npn_must_be_digits(self):
@@ -256,9 +255,10 @@ class AgentDetailTests(AgentAPITestCase):
             ],
         )
         # The new CA row's dates are on the note too; TX's are unchanged.
-        self.assertEqual(note.changes[2]['field'], 'license_dates')
-        self.assertEqual(note.changes[2]['from'], 'FL 2024-01-01 to 2026-01-01, TX 2024-01-01 to 2026-01-01')
-        self.assertTrue(note.changes[2]['to'].endswith(', TX 2024-01-01 to 2026-01-01'))
+        self.assertEqual(note.changes[2], {'field': 'license_statuses', 'from': 'FL active, TX active', 'to': 'CA active, TX active'})
+        self.assertEqual(note.changes[3]['field'], 'license_dates')
+        self.assertEqual(note.changes[3]['from'], 'FL 2024-01-01 to 2030-01-01, TX 2024-01-01 to 2030-01-01')
+        self.assertTrue(note.changes[3]['to'].endswith(', TX 2024-01-01 to 2030-01-01'))
 
     def test_patch_sets_license_lines_and_records_note(self):
         agent = make_agent(licenses=[{'state': 'TX', 'license_number': '2104587', 'life': True}])
@@ -289,6 +289,44 @@ class AgentDetailTests(AgentAPITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual([(row['life'], row['health']) for row in response.data['data']['licenses']], [(False, False)])
 
+    def test_license_status_is_set_kept_and_noted(self):
+        agent = make_agent()
+        response = self.client.patch(
+            self.detail_url(agent),
+            {
+                'licenses': [
+                    {'state': 'TX', 'license_number': '2104587', 'status': 'pending'},
+                    {'state': 'FL', 'license_number': 'W482913'},
+                    {'state': 'CA', 'status': 'applied'},
+                ]
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row['state']: row['status'] for row in response.data['data']['licenses']}
+        # FL sent no status, so it keeps its own.
+        self.assertEqual(rows, {'CA': 'applied', 'FL': 'active', 'TX': 'pending'})
+        note = AgentNote.objects.filter(agent=agent).first()
+        statuses = next(change for change in note.changes if change['field'] == 'license_statuses')
+        self.assertEqual(statuses['to'], 'CA applied, FL active, TX pending')
+
+    def test_past_end_date_makes_license_expired(self):
+        agent = make_agent()
+        response = self.client.patch(
+            self.detail_url(agent),
+            {'licenses': [{'state': 'TX', 'license_number': '2104587', 'start_date': '2020-01-01', 'end_date': '2022-01-01'}]},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['licenses'][0]['status'], 'expired')
+        self.assertEqual(agent.licenses.get().status, 'expired')
+
+    def test_rejects_unknown_license_status(self):
+        response = self.client.post(
+            self.create_url(), {**SAMPLE, 'licenses': [{'state': 'TX', 'status': 'rts'}]}, format='json'
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_license_dates_are_kept_defaulted_and_noted(self):
         agent = make_agent(licenses=[{'state': 'TX', 'license_number': '2104587'}])
         response = self.client.patch(
@@ -297,9 +335,9 @@ class AgentDetailTests(AgentAPITestCase):
                 'licenses': [
                     # Dates sent: the kept row takes them.
                     {'state': 'TX', 'license_number': '2104587', 'start_date': '2025-03-01', 'end_date': '2027-03-01'},
-                    # Only a start date: the new row's end defaults two years on from it.
+                    # Only a start date: the new row has no end date.
                     {'state': 'FL', 'license_number': 'W1', 'start_date': '2025-06-15'},
-                    # No dates: today and two years on, as before.
+                    # No dates: today and no end date.
                     {'state': 'CA', 'license_number': 'C1'},
                 ]
             },
@@ -308,14 +346,14 @@ class AgentDetailTests(AgentAPITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         rows = {row['state']: row for row in response.data['data']['licenses']}
         self.assertEqual((rows['TX']['start_date'], rows['TX']['end_date']), ('2025-03-01', '2027-03-01'))
-        self.assertEqual((rows['FL']['start_date'], rows['FL']['end_date']), ('2025-06-15', '2027-06-15'))
+        self.assertEqual((rows['FL']['start_date'], rows['FL']['end_date']), ('2025-06-15', None))
         self.assertEqual(rows['CA']['start_date'], date.today().isoformat())
-        self.assertEqual(rows['CA']['end_date'][:4], str(date.today().year + 2))
+        self.assertIsNone(rows['CA']['end_date'])
         note = agent.notes.get()
         dates = next(change for change in note.changes if change['field'] == 'license_dates')
-        self.assertEqual(dates['from'], 'TX 2024-01-01 to 2026-01-01')
+        self.assertEqual(dates['from'], 'TX 2024-01-01 to 2030-01-01')
         self.assertTrue(dates['to'].startswith('CA '))
-        self.assertIn('FL 2025-06-15 to 2027-06-15', dates['to'])
+        self.assertIn('FL 2025-06-15 to ?', dates['to'])
         self.assertIn('TX 2025-03-01 to 2027-03-01', dates['to'])
 
         # A kept row sent without dates keeps the ones it has.
@@ -369,6 +407,92 @@ class AgentDetailTests(AgentAPITestCase):
         self.assertEqual(response.data['data'][0]['created_by'], 'Admin')
 
 
+class AgentNamePartTests(AgentAPITestCase):
+    def test_parts_build_the_name(self):
+        body = {**SAMPLE, 'first_name': ' Maria   Luz ', 'last_name': 'Alva'}
+        del body['name']
+        response = self.client.post(self.create_url(), body, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        data = response.data['data']
+        self.assertEqual(data['name'], 'Maria Luz Alva')
+        self.assertEqual((data['first_name'], data['last_name']), ('Maria Luz', 'Alva'))
+        self.assertNotIn('middle_name', data)
+
+    def test_a_full_name_alone_is_split(self):
+        response = self.client.post(self.create_url(), {**SAMPLE, 'name': 'Ana de la Cruz'}, format='json')
+        data = response.data['data']
+        self.assertEqual((data['first_name'], data['last_name']), ('Ana de la', 'Cruz'))
+
+    def test_create_needs_a_first_name_or_name(self):
+        body = {**SAMPLE, 'last_name': 'Alva'}
+        del body['name']
+        response = self.client.post(self.create_url(), body, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('first_name', response.data['errors'])
+
+    def test_patching_one_part_rebuilds_the_name_and_notes_it(self):
+        agent = make_agent()
+        response = self.client.patch(self.detail_url(agent), {'first_name': 'Maria Luz'}, format='json')
+        self.assertEqual(response.data['data']['name'], 'Maria Luz Alva')
+        note = AgentNote.objects.filter(agent=agent).first()
+        self.assertEqual(note.changes, [{'field': 'name', 'from': 'Maria Alva', 'to': 'Maria Luz Alva'}])
+
+    def test_one_word_names_are_fine(self):
+        body = {**SAMPLE, 'first_name': 'Jo', 'last_name': 'Li'}
+        del body['name']
+        response = self.client.post(self.create_url(), body, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['data']['name'], 'Jo Li')
+
+    def test_new_name_must_be_free(self):
+        make_agent(name='Maria Luz Alva', npn='99999999', email='other@example.com')
+        agent = make_agent()
+        response = self.client.patch(self.detail_url(agent), {'first_name': 'maria luz'}, format='json')
+        self.assertEqual(response.status_code, 400)
+
+    def test_blanking_every_part_is_refused(self):
+        agent = make_agent()
+        response = self.client.patch(
+            self.detail_url(agent), {'first_name': '', 'last_name': ''}, format='json'
+        )
+        self.assertEqual(response.status_code, 400)
+
+
+class AgentStatusTests(AgentAPITestCase):
+    def test_onboarding_and_sdr_count_as_active(self):
+        for npn, value in (('11111111', 'onboarding'), ('22222222', 'sdr')):
+            response = self.client.post(
+                self.create_url(),
+                {**SAMPLE, 'name': f'Agent {value}', 'npn': npn, 'email': '', 'status': value},
+                format='json',
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+            self.assertEqual(response.data['data']['status'], value)
+            self.assertTrue(response.data['data']['is_active'])
+
+    def test_inactive_status_switches_is_active_off(self):
+        agent = make_agent(status='sdr')
+        response = self.client.patch(self.detail_url(agent), {'status': 'inactive'}, format='json')
+        self.assertFalse(response.data['data']['is_active'])
+        note = AgentNote.objects.filter(agent=agent).first()
+        self.assertEqual(note.changes, [{'field': 'status', 'from': 'sdr', 'to': 'inactive'}])
+
+    def test_is_active_alone_keeps_onboarding(self):
+        agent = make_agent(status='onboarding')
+        response = self.client.patch(self.detail_url(agent), {'is_active': True}, format='json')
+        self.assertEqual(response.data['data']['status'], 'onboarding')
+        response = self.client.patch(self.detail_url(agent), {'is_active': False}, format='json')
+        self.assertEqual(response.data['data']['status'], 'inactive')
+        response = self.client.patch(self.detail_url(agent), {'is_active': True}, format='json')
+        self.assertEqual(response.data['data']['status'], 'active')
+
+    def test_list_filters_by_status(self):
+        make_agent(status='sdr')
+        make_agent(name='Other', npn='99999999', email='other@example.com')
+        response = self.client.get(self.list_url(), {'status': 'sdr'})
+        self.assertEqual([row['name'] for row in response.data['data']], ['Maria Alva'])
+
+
 class AgentWorkEmailTests(AgentAPITestCase):
     def test_work_email_cannot_belong_to_another_agent(self):
         make_agent()
@@ -400,3 +524,40 @@ class AgentPermissionTests(AgentAPITestCase):
         self.staff.roles.set([make_role(can_view=True)])
         self.assertEqual(self.client.get(self.list_url()).status_code, 200)
         self.assertEqual(self.client.post(self.create_url(), SAMPLE, format='json').status_code, 403)
+
+
+class AgentLicenseRenewalTests(AgentAPITestCase):
+    """`renewing` sticks only while the end date is within 60 days or passed, and leaves the status alone."""
+
+    def patch_tx(self, agent, **fields):
+        response = self.client.patch(
+            self.detail_url(agent), {'licenses': [{'state': 'TX', **fields}]}, format='json'
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data['data']['licenses'][0]
+
+    def test_renewing_is_kept_inside_the_window_and_the_status_stays(self):
+        agent = make_agent(licenses=[{'state': 'TX'}])
+        soon = (date.today() + timedelta(days=30)).isoformat()
+        row = self.patch_tx(agent, end_date=soon, renewing=True)
+        self.assertTrue(row['renewing'])
+        self.assertEqual(row['status'], 'active')
+        # Left out on a later save: unchanged.
+        self.assertTrue(self.patch_tx(agent, license_number='9')['renewing'])
+
+    def test_renewing_is_cleared_outside_the_window(self):
+        agent = make_agent(licenses=[{'state': 'TX'}])
+        self.assertFalse(self.patch_tx(agent, renewing=True)['renewing'])
+
+    def test_a_new_end_date_past_the_window_clears_it(self):
+        agent = make_agent(licenses=[{'state': 'TX'}])
+        self.patch_tx(agent, end_date=(date.today() + timedelta(days=10)).isoformat(), renewing=True)
+        renewed = (date.today() + timedelta(days=400)).isoformat()
+        self.assertFalse(self.patch_tx(agent, end_date=renewed)['renewing'])
+
+    def test_an_expired_licence_can_be_marked_renewing(self):
+        agent = make_agent(licenses=[{'state': 'TX'}])
+        past = (date.today() - timedelta(days=5)).isoformat()
+        row = self.patch_tx(agent, start_date='2020-01-01', end_date=past, renewing=True)
+        self.assertTrue(row['renewing'])
+        self.assertEqual(row['status'], 'expired')

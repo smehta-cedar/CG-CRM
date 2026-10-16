@@ -1,4 +1,7 @@
+from datetime import timedelta
+
 from django.db import models
+from django.utils import timezone
 
 from apps.base.models import BaseModel
 
@@ -6,17 +9,36 @@ from .agencies import Agency
 from .states import State
 
 # An agent's licence (apps.agents.models.LICENSE_STATUSES) shares the first
-# three and JIT; the agency's form also offers applied, expired and
-# cancelled. Kept here so the agency app does not import the agents app.
+# four; the agency's also offers cancelled. Kept here so the agency app does
+# not import the agents app. expired is set from the end date on save and
+# reported from it on read (current_status).
 LICENSE_STATUSES = (
     ('active', 'Active'),
-    ('review', 'Review'),
     ('pending', 'Pending'),
     ('applied', 'Applied'),
     ('expired', 'Expired'),
     ('cancelled', 'Cancelled'),
-    ('jit', 'JIT'),
 )
+
+# A licence can be marked renewing from this many days before its end date,
+# and after it; the status keeps its own value meanwhile.
+RENEWAL_WINDOW_DAYS = 60
+
+
+def renewal_open(end_date):
+    """Whether a licence ending on `end_date` can be marked renewing: it has
+    an end date, and that date is at most RENEWAL_WINDOW_DAYS away or passed."""
+    return end_date is not None and end_date <= timezone.localdate() + timedelta(days=RENEWAL_WINDOW_DAYS)
+
+
+def clear_closed_renewal(row, kwargs):
+    """Untick `renewing` on a row being saved once its end date is outside the
+    window (renewed, or no date), and save the flag whenever the date is."""
+    if row.renewing and not renewal_open(row.end_date):
+        row.renewing = False
+    update_fields = kwargs.get('update_fields')
+    if update_fields is not None and 'end_date' in update_fields and 'renewing' not in update_fields:
+        kwargs['update_fields'] = [*update_fields, 'renewing']
 
 
 class AgencyStateLicense(BaseModel):
@@ -27,6 +49,10 @@ class AgencyStateLicense(BaseModel):
     The API derives the agency's `licensed_states` / `license_numbers` from
     these rows and the agency form edits them (a checked state keeps or gets
     a row, an unchecked one loses it).
+
+    `life` and `health` are the lines of business the licence covers in that
+    state, ticked on the licence form beside the state's number. Both start
+    off; the form records what the licence actually covers.
     """
 
     agency = models.ForeignKey(Agency, on_delete=models.CASCADE, related_name='licenses')
@@ -35,6 +61,23 @@ class AgencyStateLicense(BaseModel):
     status = models.CharField(max_length=10, choices=LICENSE_STATUSES, default='active')
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
+    renewing = models.BooleanField(default=False, help_text='A renewal is under way; see renewal_open.')
+    life = models.BooleanField(default=False, help_text='The licence covers life insurance.')
+    health = models.BooleanField(default=False, help_text='The licence covers health insurance.')
+
+    @property
+    def current_status(self):
+        """The status as of today: a row whose end date passed since it was
+        saved reads as expired."""
+        if self.end_date and self.end_date < timezone.localdate():
+            return 'expired'
+        return self.status
+
+    @property
+    def lines_text(self):
+        """"Life & Health", "Life", "Health" or "", as notes show it."""
+        lines = [name for flag, name in ((self.life, 'Life'), (self.health, 'Health')) if flag]
+        return ' & '.join(lines)
 
     class Meta(BaseModel.Meta):
         ordering = ('created_at',)
@@ -52,4 +95,11 @@ class AgencyStateLicense(BaseModel):
 
     def save(self, *args, **kwargs):
         self.license_number = self.license_number.strip()
+        if self.end_date and self.end_date < timezone.localdate():
+            self.status = 'expired'
+        # The status follows the end date, so it is saved whenever the date is.
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None and 'end_date' in update_fields and 'status' not in update_fields:
+            kwargs['update_fields'] = [*update_fields, 'status']
+        clear_closed_renewal(self, kwargs)
         super().save(*args, **kwargs)

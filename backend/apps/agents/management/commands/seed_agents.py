@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from apps.agency.models import State
-from apps.agents.models import LICENSE_STATUSES, Agent, AgentStateLicense
+from apps.agents.models import AGENT_STATUSES, LICENSE_STATUSES, Agent, AgentStateLicense
 from apps.agents.utils import address_fields, normalize_aliases, normalize_name
 
 # backend/apps/agents/management/commands -> repo root
@@ -53,7 +53,7 @@ class Command(BaseCommand):
                     'phone': row.get('phone', ''),
                     'personal_email': row.get('personalEmail', ''),
                     'personal_phone': row.get('personalPhone', ''),
-                    'is_active': row.get('status', 'active') != 'inactive',
+                    'status': row.get('status', 'active') if row.get('status') in dict(AGENT_STATUSES) else 'active',
                     **address_fields(address),
                 }
                 if address and address.get('state') and address['state'].upper() not in states_by_code:

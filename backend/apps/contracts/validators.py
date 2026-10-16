@@ -1,6 +1,7 @@
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.agency.models import Agency, State
+from apps.agents.models import Agent
 from apps.carriers.models import Carrier
 from apps.contracts.models import AgencyCarrierContract, CarrierContract
 from apps.contracts.utils import is_agent_accessible
@@ -73,10 +74,10 @@ def ensure_within_ceiling(states, agent, carrier):
 
 
 def ensure_carrier_accessible(carrier):
-    """Agents can only be given a carrier whose live agency contract has a
-    contract number. Shared by the appointment and password APIs."""
+    """Agents can only be given a carrier whose live agency contract is active
+    and has a contract number. Shared by the appointment and password APIs."""
     if not is_agent_accessible(carrier):
-        raise ValidationError({'carrier': ['Add a contract number before an agent can use this carrier.']})
+        raise ValidationError({'carrier': ["The agency's contract with this carrier must be active with a contract number first."]})
 
 
 # --- agency contracts -------------------------------------------------------
@@ -108,11 +109,35 @@ def ensure_carrier_free(carrier, exclude=None):
 
 
 def resolve_policy_types(pks):
-    """The live PolicyType rows for `pks`. Unknown ones are a 400 under
-    "policy_types"."""
-    wanted = set(pks)
-    policy_types = list(PolicyType.objects.filter(pk__in=wanted))
-    if len(policy_types) != len(wanted):
-        raise ValidationError({'policy_types': ['Unknown policy type.']})
-    return policy_types
+    """The live PolicyType rows for `pks`. Policy types are an add-on, not a
+    check: unknown or deleted ones are dropped, never a 400."""
+    return list(PolicyType.objects.filter(pk__in=set(pks)))
 
+
+
+def resolve_agents(pks):
+    """The live Agent rows for `pks`; unknown ones are a 400 under "agents"."""
+    wanted = set(pks)
+    agents = list(Agent.objects.filter(pk__in=wanted))
+    if len(agents) != len(wanted):
+        raise ValidationError({'agents': ['Unknown agent.']})
+    return agents
+
+
+def ensure_can_appoint(user, carrier, contract_number, status):
+    """Appointing agents from an agency contract needs the contracts create
+    permission and a contract that opens the carrier to agents: active, with
+    a contract number."""
+    if not user.has_permission('contracts', 'create'):
+        raise PermissionDenied("Your role can't add agent contracts.")
+    if status != 'active' or not contract_number.strip():
+        raise ValidationError({
+            'agents': [f'The contract must be active with a contract number before agents can be given {carrier.name}.']
+        })
+
+
+def ensure_number_when_active(contract_number, status):
+    """An active agency contract must have a contract number; any other
+    status may leave it blank."""
+    if status == 'active' and not contract_number.strip():
+        raise ValidationError({'contract_number': ['Enter the contract number for an active contract.']})

@@ -46,7 +46,10 @@ request_merch_create = extend_schema(
     operation_id='requests_merch_create',
     tags=TAGS,
     summary='File a tee order from the shop',
-    description="Posted by the shop's service account on behalf of a visitor. Starts pending.",
+    description=(
+        'Posted by the signed-in shop user. Buyer name, email and phone come from '
+        'their profile; a linked agent\'s home address is used when present. Starts pending.'
+    ),
     request=MerchRequestCreateSerializer,
     responses={201: api_response(RequestSerializer), **error_responses(400, 401, 403)},
 )

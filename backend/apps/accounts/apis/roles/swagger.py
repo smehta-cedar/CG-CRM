@@ -54,7 +54,10 @@ role_detail = combine_schemas(
         methods=['PATCH'],
         tags=TAGS,
         summary='Update a role',
-        description='Superusers only. `permissions`, when sent, replaces the whole set.',
+        description=(
+            'Superusers only. `permissions`, when sent, replaces the whole set. '
+            'A built-in role (Admin, Operations, Agent) cannot be renamed or switched off (400).'
+        ),
         request=RoleUpdateSerializer,
         responses={200: api_response(RoleSerializer), **error_responses(400, 401, 403, 404)},
     ),
@@ -62,7 +65,9 @@ role_detail = combine_schemas(
         methods=['DELETE'],
         tags=TAGS,
         summary='Delete a role',
-        description='Superusers only. Soft delete; refused (400) while any user still holds the role.',
+        description=(
+            'Superusers only. Soft delete; refused (400) for a built-in role or while any user still holds the role.'
+        ),
         responses={200: api_response(), **error_responses(400, 401, 403, 404)},
     ),
 )

@@ -81,6 +81,22 @@ def ensure_role_name_free(name, exclude=None):
         raise ValidationError({'name': ['A role with this name already exists.']})
 
 
+def ensure_role_deletable(role):
+    if role.is_system:
+        raise ValidationError({'non_field_errors': [f'{role.name} is a built-in role and cannot be deleted.']})
+
+
+def ensure_system_role_fields(role, fields):
+    """A built-in role keeps its name and stays active; code finds Agent and
+    Admin by name. Sending the current values is allowed."""
+    if not role.is_system:
+        return
+    if 'name' in fields and fields['name'].lower() != role.name.lower():
+        raise ValidationError({'name': [f'{role.name} is a built-in role and cannot be renamed.']})
+    if fields.get('is_active') is False:
+        raise ValidationError({'is_active': [f'{role.name} is a built-in role and cannot be switched off.']})
+
+
 def ensure_role_unassigned(role):
     """A role still held by live users cannot be deleted; reassign them first."""
     count = role.users.count()

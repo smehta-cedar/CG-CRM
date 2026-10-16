@@ -203,12 +203,13 @@ SPECTACULAR_SETTINGS = {
     # not `api_v1_users_list`.
     'SCHEMA_PATH_PREFIX': r'/api/v[0-9]',
 
-    # Three models have a "status" choice field with different values; name
+    # Four models have a "status" choice field with different values; name
     # each enum after its model rather than letting spectacular number them.
     'ENUM_NAME_OVERRIDES': {
         'LicenseStatusEnum': 'apps.agents.models.LICENSE_STATUSES',
         'PasswordStatusEnum': 'apps.passwords.models.PASSWORD_STATUSES',
         'RequestStatusEnum': 'apps.requests.models.REQUEST_STATUSES',
+        'TaskStatusEnum': 'apps.requests.models.TASK_STATUSES',
     },
 }
 

@@ -14,7 +14,7 @@ class CarrierPolicySerializer(serializers.ModelSerializer):
     """How a carrier policy appears in every response."""
 
     carrier = CarrierSummarySerializer(read_only=True)
-    policy_type = PolicyTypeSummarySerializer(read_only=True)
+    policy_type = PolicyTypeSummarySerializer(read_only=True, allow_null=True)
     available_states = serializers.ListField(
         child=serializers.CharField(),
         source='state_codes',
@@ -77,7 +77,11 @@ def _states_field():
 
 class CarrierPolicyCreateSerializer(serializers.Serializer):
     carrier = serializers.UUIDField(help_text='The carrier that offers the policy.')
-    policy_type = serializers.UUIDField(help_text='A row from the policy type catalog.')
+    policy_type = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text='Optional: a row from the policy type catalog. Unknown ones are ignored.',
+    )
     name = serializers.CharField(max_length=255)
     available_states = _states_field()
     is_active = serializers.BooleanField(required=False)
@@ -86,7 +90,7 @@ class CarrierPolicyCreateSerializer(serializers.Serializer):
 class CarrierPolicyUpdateSerializer(serializers.Serializer):
     """Send only the fields that change. The carrier can't change: a policy stays on the carrier it was added to."""
 
-    policy_type = serializers.UUIDField(required=False)
+    policy_type = serializers.UUIDField(required=False, allow_null=True, help_text='null clears it.')
     name = serializers.CharField(max_length=255, required=False)
     available_states = _states_field()
     is_active = serializers.BooleanField(required=False)

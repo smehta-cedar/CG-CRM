@@ -2,7 +2,7 @@ from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from .models import Role, RolePermission, User, UserNote
-from .models.roles import PERMISSION_LABELS
+from .models.roles import PERMISSION_LABELS, SECTIONS
 
 
 class UserNotesTests(APITestCase):
@@ -108,14 +108,16 @@ class UserNotesTests(APITestCase):
         self.assertFalse(user.notes.exists())
 
     def test_roles_list(self):
-        Role.objects.create(name='Admin')
         Role.objects.create(name='Old', is_active=False)
         response = self.client.get(reverse('accounts:apis:roles:list'))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([role['name'] for role in response.data['data']], ['Admin', 'Old', 'Staff'])
+        # Admin, Agent and Operations are built in.
+        self.assertEqual(
+            [role['name'] for role in response.data['data']], ['Admin', 'Agent', 'Old', 'Operations', 'Staff']
+        )
         # The Users form asks for the active ones only.
         response = self.client.get(reverse('accounts:apis:roles:list'), {'is_active': 'true'})
-        self.assertEqual([role['name'] for role in response.data['data']], ['Admin', 'Staff'])
+        self.assertEqual([role['name'] for role in response.data['data']], ['Admin', 'Agent', 'Operations', 'Staff'])
 
 
 class UserManagerLimitsTests(APITestCase):
@@ -128,7 +130,7 @@ class UserManagerLimitsTests(APITestCase):
         )
         self.manager = User.objects.create_user(email='hr@example.com', password='Str0ng-pass-word!', full_name='HR')
         self.manager.roles.add(manage)
-        self.admin_role = Role.objects.create(name='Admin')
+        self.admin_role = Role.objects.get(name='Admin')  # built in
         self.client.force_authenticate(self.manager)
 
     def url(self, name, *args):
@@ -213,8 +215,8 @@ class RolesApiTests(APITestCase):
                 'name': '  Ops  Manager ',
                 'description': 'Runs the office.',
                 'permissions': [
-                    {'module': 'agents', 'can_view': True, 'can_create': True, 'can_update': True},
-                    {'module': 'carriers', 'can_view': True},
+                    {'module': 'agents.list', 'can_view': True, 'can_create': True, 'can_update': True},
+                    {'module': 'carriers.list', 'can_view': True},
                 ],
             },
             format='json',
@@ -224,10 +226,11 @@ class RolesApiTests(APITestCase):
         self.assertEqual(data['name'], 'Ops Manager')
         self.assertEqual(data['user_count'], 0)
         flags = {row['module']: row for row in data['permissions']}
-        self.assertTrue(flags['agents']['can_update'])
-        self.assertFalse(flags['agents']['can_delete'])
-        self.assertTrue(flags['carriers']['can_view'])
-        self.assertFalse(flags['carriers']['can_create'])
+        self.assertTrue(flags['agents.list']['can_update'])
+        self.assertFalse(flags['agents.list']['can_delete'])
+        self.assertFalse(flags['agents.profile']['can_view'])
+        self.assertTrue(flags['carriers.list']['can_view'])
+        self.assertFalse(flags['carriers.list']['can_create'])
         # Every module is answered, the ones left out with no access.
         self.assertEqual(set(flags), set(PERMISSION_LABELS))
         self.assertFalse(any(flags['users'][f'can_{action}'] for action in ('view', 'create', 'update', 'delete')))
@@ -240,7 +243,7 @@ class RolesApiTests(APITestCase):
     def test_create_needs_view_for_other_actions(self):
         response = self.client.post(
             self.url('create'),
-            {'name': 'Broken', 'permissions': [{'module': 'agents', 'can_delete': True}]},
+            {'name': 'Broken', 'permissions': [{'module': 'agents.list', 'can_delete': True}]},
             format='json',
         )
         self.assertEqual(response.status_code, 400)
@@ -254,18 +257,18 @@ class RolesApiTests(APITestCase):
 
     def test_patch_replaces_permissions(self):
         role = Role.objects.create(name='Staff')
-        RolePermission.objects.create(role=role, module='agents', can_view=True, can_delete=True)
+        RolePermission.objects.create(role=role, module='agents.list', can_view=True, can_delete=True)
         response = self.client.patch(
             self.url('detail', role.pk),
-            {'name': 'Staff 2', 'permissions': [{'module': 'carriers', 'can_view': True}]},
+            {'name': 'Staff 2', 'permissions': [{'module': 'carriers.list', 'can_view': True}]},
             format='json',
         )
         self.assertEqual(response.status_code, 200, response.data)
         role.refresh_from_db()
         self.assertEqual(role.name, 'Staff 2')
         flags = {row['module']: row for row in response.data['data']['permissions']}
-        self.assertFalse(flags['agents']['can_view'])
-        self.assertTrue(flags['carriers']['can_view'])
+        self.assertFalse(flags['agents.list']['can_view'])
+        self.assertTrue(flags['carriers.list']['can_view'])
 
     def test_delete_refused_while_users_hold_the_role(self):
         staff = self.make_staff()
@@ -277,6 +280,46 @@ class RolesApiTests(APITestCase):
         response = self.client.delete(self.url('detail', role.pk))
         self.assertEqual(response.status_code, 200, response.data)
         self.assertFalse(Role.objects.filter(pk=role.pk).exists())
+
+    def test_built_in_roles_cannot_be_deleted_renamed_or_switched_off(self):
+        for name in ('Admin', 'Operations', 'Agent'):
+            role = Role.objects.get(name=name)
+            self.assertTrue(self.client.get(self.url('detail', role.pk)).data['data']['is_system'])
+            response = self.client.delete(self.url('detail', role.pk))
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('built-in', response.data['message'])
+            response = self.client.patch(self.url('detail', role.pk), {'name': f'{name} 2'}, format='json')
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('name', response.data['errors'])
+            response = self.client.patch(self.url('detail', role.pk), {'is_active': False}, format='json')
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('is_active', response.data['errors'])
+            self.assertTrue(Role.objects.filter(pk=role.pk, name=name, is_active=True).exists())
+
+    def test_built_in_roles_stay_editable(self):
+        role = Role.objects.get(name='Agent')
+        response = self.client.patch(
+            self.url('detail', role.pk),
+            {
+                'name': 'agent',
+                'is_active': True,
+                'description': 'Every agent sign-in.',
+                'permissions': [{'module': 'requests', 'can_view': True}],
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        role.refresh_from_db()
+        # The built-in spelling is kept.
+        self.assertEqual(role.name, 'Agent')
+        self.assertEqual(role.description, 'Every agent sign-in.')
+        flags = {row['module']: row for row in response.data['data']['permissions']}
+        self.assertTrue(flags['requests']['can_view'])
+        self.assertFalse(flags['users']['can_view'])
+
+    def test_custom_role_is_not_built_in(self):
+        response = self.client.post(self.url('create'), {'name': 'Ops Lead'}, format='json')
+        self.assertFalse(response.data['data']['is_system'])
 
     def test_non_superuser_can_read_but_not_change(self):
         staff = self.make_staff()
@@ -306,7 +349,7 @@ class MePermissionsTests(APITestCase):
 
     def test_role_user_gets_only_granted_modules(self):
         role = Role.objects.create(name='Staff')
-        RolePermission.objects.create(role=role, module='carriers', can_view=True, can_update=True)
+        RolePermission.objects.create(role=role, module='carriers.list', can_view=True, can_update=True)
         user = User.objects.create_user(email='s@example.com', password='Str0ng-pass-word!', full_name='S')
         user.roles.add(role)
         self.client.force_authenticate(user)
@@ -314,21 +357,25 @@ class MePermissionsTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.data['data']['permissions'],
-            {'carriers': {'view': True, 'create': False, 'update': True, 'delete': False}},
+            {
+                'carriers.list': {'view': True, 'create': False, 'update': True, 'delete': False},
+                # The section answers for any of its sub-links.
+                'carriers': {'view': True, 'create': False, 'update': True, 'delete': False},
+            },
         )
 
     def test_superuser_gets_every_module(self):
         admin = User.objects.create_superuser(email='a@example.com', password='Sup3r-secret!', full_name='A')
         self.client.force_authenticate(admin)
         permissions = self.client.get(self.url).data['data']['permissions']
-        self.assertEqual(set(permissions), set(PERMISSION_LABELS))
+        self.assertEqual(set(permissions), {*PERMISSION_LABELS, *SECTIONS})
 
     def test_roles_add_up_and_no_role_means_nothing(self):
         viewer = Role.objects.create(name='Viewer')
-        RolePermission.objects.create(role=viewer, module='carriers', can_view=True)
+        RolePermission.objects.create(role=viewer, module='carriers.list', can_view=True)
         editor = Role.objects.create(name='Editor')
-        RolePermission.objects.create(role=editor, module='carriers', can_view=True, can_update=True)
-        RolePermission.objects.create(role=editor, module='agents', can_view=True)
+        RolePermission.objects.create(role=editor, module='carriers.list', can_view=True, can_update=True)
+        RolePermission.objects.create(role=editor, module='agents.list', can_view=True)
         off = Role.objects.create(name='Off', is_active=False)
         RolePermission.objects.create(role=off, module='users', can_view=True, can_delete=True)
         user = User.objects.create_user(email='s@example.com', password='Str0ng-pass-word!', full_name='S')
@@ -342,7 +389,9 @@ class MePermissionsTests(APITestCase):
         self.assertEqual(
             permissions,
             {
+                'carriers.list': {'view': True, 'create': False, 'update': True, 'delete': False},
                 'carriers': {'view': True, 'create': False, 'update': True, 'delete': False},
+                'agents.list': {'view': True, 'create': False, 'update': False, 'delete': False},
                 'agents': {'view': True, 'create': False, 'update': False, 'delete': False},
             },
         )

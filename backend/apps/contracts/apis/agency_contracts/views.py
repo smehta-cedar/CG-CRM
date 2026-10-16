@@ -6,21 +6,34 @@ from rest_framework.permissions import IsAuthenticated
 from apps.base.api.pagination import paginate
 from apps.base.api.permissions import module_permission
 from apps.base.api.response import APIResponse
-from apps.contracts.models import AgencyCarrierContract, AgencyCarrierContractNote
+from apps.contracts.models import (
+    AgencyCarrierContract,
+    AgencyCarrierContractNote,
+    CarrierContract,
+    CarrierContractNote,
+)
 from apps.contracts.utils import (
     agency_contract_queryset,
     agency_snapshot,
     diff_agency_snapshots,
+    diff_snapshots,
     get_agency_contract_or_404,
     record_agency_note,
+    record_note,
     save_agency_contract,
+    snapshot,
 )
 from apps.contracts.validators import (
+    ensure_can_appoint,
     ensure_carrier_free,
+    ensure_number_when_active,
     resolve_agency,
+    resolve_agents,
     resolve_carrier,
     resolve_policy_types,
 )
+from apps.passwords.utils import add_pending_password
+from apps.policies.utils import add_contract_certifications
 
 from . import swagger
 from .serializers import (
@@ -31,7 +44,28 @@ from .serializers import (
     AgencyContractUpdateSerializer,
 )
 
-CAN_MANAGE_AGENCY_CONTRACTS = module_permission('agency_contracts')
+CAN_MANAGE_AGENCY_CONTRACTS = module_permission('agencies')
+
+
+def appoint_agents(agents, carrier, actor):
+    """Appoint each of `agents` with `carrier`, as the Contracts page's add
+    would: a pending appointment with no writing number or states, its
+    "added" note, this year's certifications and a pending password. Agents
+    already appointed there are skipped."""
+    taken = set(CarrierContract.objects.filter(carrier=carrier, agent__in=agents).values_list('agent_id', flat=True))
+    for agent in agents:
+        if agent.pk in taken:
+            continue
+        contract = CarrierContract.objects.create(
+            agent=agent,
+            carrier=carrier,
+            status='pending',
+            created_by=actor,
+            updated_by=actor,
+        )
+        record_note(contract, actor, CarrierContractNote.KIND_ADDED, diff_snapshots({}, snapshot(contract)))
+        add_contract_certifications(agent, carrier, actor)
+        add_pending_password(carrier, actor, agent=agent)
 
 
 @swagger.agency_contract_list
@@ -67,13 +101,19 @@ def agency_contract_create(request):
     carrier = resolve_carrier(data['carrier'])
     ensure_carrier_free(carrier)
     policy_types = resolve_policy_types(data.get('policy_types', []))
+    contract_number = data.get('contract_number', '')
+    contract_status = data.get('status', 'active')
+    ensure_number_when_active(contract_number, contract_status)
+    agents = resolve_agents(data.get('agents', []))
+    if agents:
+        ensure_can_appoint(request.user, carrier, contract_number, contract_status)
 
     with transaction.atomic():
         contract = AgencyCarrierContract.objects.create(
             agency=agency,
             carrier=carrier,
-            contract_number=data.get('contract_number', ''),
-            is_active=data.get('is_active', True),
+            contract_number=contract_number,
+            status=contract_status,
             created_by=request.user,
             updated_by=request.user,
         )
@@ -86,6 +126,9 @@ def agency_contract_create(request):
             AgencyCarrierContractNote.KIND_ADDED,
             diff_agency_snapshots({}, agency_snapshot(contract)),
         )
+        # The agency gets a pending password at the carrier to fill in once the login is issued.
+        add_pending_password(carrier, request.user, agency=agency)
+        appoint_agents(agents, carrier, request.user)
 
     return APIResponse(
         AgencyContractSerializer(contract).data,
@@ -122,6 +165,19 @@ def agency_contract_detail(request, pk):
         if 'policy_types' in fields:
             policy_types = resolve_policy_types(fields.pop('policy_types'))
 
+        contract_number = fields.get('contract_number', contract.contract_number)
+        contract_status = fields.get('status', contract.status)
+        # Only checked when the number or status is sent, so an older active
+        # contract with no number can still have its policy types edited.
+        if 'contract_number' in fields or 'status' in fields:
+            ensure_number_when_active(contract_number, contract_status)
+        agents = resolve_agents(fields.pop('agents', []))
+        if agents:
+            ensure_can_appoint(request.user, carrier, contract_number, contract_status)
+
+        # Only a carrier new to the contract gets a pending password, so one that
+        # was deleted on purpose isn't brought back by an unrelated edit.
+        new_carrier = carrier != contract.carrier
         before = agency_snapshot(contract)
         with transaction.atomic():
             save_agency_contract(contract, request.user, policy_types=policy_types, **fields)
@@ -133,6 +189,9 @@ def agency_contract_detail(request, pk):
                 AgencyCarrierContractNote.KIND_EDITED,
                 diff_agency_snapshots(before, agency_snapshot(contract)),
             )
+            if new_carrier:
+                add_pending_password(contract.carrier, request.user, agency=contract.agency)
+            appoint_agents(agents, contract.carrier, request.user)
         return APIResponse(AgencyContractSerializer(contract).data, 'Agency contract updated successfully.')
 
     # DELETE: soft delete; the carrier can be contracted again.

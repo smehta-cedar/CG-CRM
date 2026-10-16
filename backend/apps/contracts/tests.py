@@ -11,7 +11,7 @@ from .models import AgencyCarrierContract, CarrierContract, CarrierContractNote
 
 def make_role(**flags):
     role = Role.objects.create(name=f"contracts-{'-'.join(k for k, v in flags.items() if v) or 'none'}")
-    RolePermission.objects.create(role=role, module='contracts', **flags)
+    RolePermission.objects.create(role=role, module='contracts.by_state', **flags)
     return role
 
 
@@ -76,6 +76,7 @@ class ContractCreateTests(ContractAPITestCase):
                 {'field': 'agent', 'from': '', 'to': 'Maria Alva'},
                 {'field': 'carrier', 'from': '', 'to': 'Humana'},
                 {'field': 'writing_number', 'from': '', 'to': 'H4471902'},
+                {'field': 'status', 'from': '', 'to': 'active'},
                 {'field': 'appointed_states', 'from': '', 'to': 'FL, TX'},
             ],
         )
@@ -110,7 +111,7 @@ class ContractCreateTests(ContractAPITestCase):
 
 
 class ContractCarrierAccessTests(ContractAPITestCase):
-    MESSAGE = ['Add a contract number before an agent can use this carrier.']
+    MESSAGE = ["The agency's contract with this carrier must be active with a contract number first."]
 
     def test_rejects_carrier_whose_agency_contract_has_no_number(self):
         AgencyCarrierContract.objects.filter(carrier=self.carrier).update(contract_number='')
@@ -163,6 +164,18 @@ class ContractDetailTests(ContractAPITestCase):
         self.assertEqual(response.data['data']['appointed_states'], ['TX'])
         self.assertEqual(contract.notes.get().changes, [{'field': 'appointed_states', 'from': 'FL, TX', 'to': 'TX'}])
 
+    def test_patch_status_records_note(self):
+        contract = self.make_contract(states=['TX'])
+        response = self.client.patch(self.detail_url(contract), {'status': 'pending'}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['status'], 'pending')
+        self.assertEqual(contract.notes.get().changes, [{'field': 'status', 'from': 'active', 'to': 'pending'}])
+
+    def test_rejects_unknown_status(self):
+        response = self.client.post(self.create_url(), {**self.sample, 'status': 'expired'}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('status', response.data['errors'])
+
     def test_patch_rechecks_ceiling_when_carrier_changes(self):
         contract = self.make_contract(states=['TX'])
         response = self.client.patch(self.detail_url(contract), {'carrier_id': str(self.other_carrier.pk)}, format='json')
@@ -207,6 +220,7 @@ class ContractCertificationTests(ContractAPITestCase):
         from apps.policies.utils import certification_due_date
 
         self.carrier.lines_of_business = ['Medicare Supplement', 'MAPD']
+        self.carrier.certification_lines = ['Medicare Supplement', 'MAPD']
         self.carrier.save()
         response = self.client.post(self.create_url(), self.sample, format='json')
         self.assertEqual(response.status_code, 201, response.data)
@@ -222,3 +236,39 @@ class ContractCertificationTests(ContractAPITestCase):
         response = self.client.post(self.create_url(), {**self.sample, 'appointed_states': ['LA']}, format='json')
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Certification.objects.exists())
+
+
+class AgentOwnContractTests(ContractAPITestCase):
+    """An agent's sign-in reads every contract and changes only its own."""
+
+    def setUp(self):
+        super().setUp()
+        self.own = self.make_contract(writing_number='OLD-1', states=['FL'])
+        self.others = self.make_contract(agent=self.other_agent, writing_number='JC-1')
+        RolePermission.objects.create(
+            role=Role.objects.get(name='Agent'), module='contracts.by_state',
+            can_view=True, can_create=True, can_update=True, can_delete=True,
+        )
+        self.client.force_authenticate(
+            User.objects.create_user(email='maria@example.com', password='x', full_name='Maria Alva', agent=self.agent)
+        )
+
+    def test_reads_every_contract(self):
+        names = {row['agent']['name'] for row in self.client.get(self.list_url()).data['data']}
+        self.assertEqual(names, {'Maria Alva', 'James Carter'})
+
+    def test_changes_own_writing_number(self):
+        response = self.client.patch(self.detail_url(self.own), {'writing_number': 'NEW-9'}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+
+    def test_cannot_change_or_delete_another_agents(self):
+        self.assertEqual(self.client.patch(self.detail_url(self.others), {'writing_number': 'X'}, format='json').status_code, 403)
+        self.assertEqual(self.client.delete(self.detail_url(self.others)).status_code, 403)
+
+    def test_cannot_hand_own_contract_to_another_agent(self):
+        response = self.client.patch(self.detail_url(self.own), {'agent_id': str(self.other_agent.pk)}, format='json')
+        self.assertEqual(response.status_code, 403)
+
+    def test_cannot_add_one_for_another_agent(self):
+        response = self.client.post(self.create_url(), {**self.sample, 'agent_id': str(self.other_agent.pk)}, format='json')
+        self.assertEqual(response.status_code, 403)

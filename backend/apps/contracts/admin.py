@@ -50,8 +50,8 @@ class AgencyCarrierContractNoteInline(admin.TabularInline):
 
 @admin.register(AgencyCarrierContract)
 class AgencyCarrierContractAdmin(admin.ModelAdmin):
-    list_display = ('carrier', 'agency', 'contract_number', 'is_active', 'created_at')
-    list_filter = ('is_active',)
+    list_display = ('carrier', 'agency', 'contract_number', 'status', 'created_at')
+    list_filter = ('status',)
     search_fields = ('carrier__name', 'agency__name', 'contract_number')
     autocomplete_fields = ('agency', 'carrier')
     filter_horizontal = ('policy_types',)

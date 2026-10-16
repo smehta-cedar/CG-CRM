@@ -6,7 +6,7 @@ from apps.base.managers import SoftDeleteManager
 from apps.base.models import BaseModel
 
 from .designations import Designation
-from .roles import ACTIONS, AGENT_ROLE_NAME, PERMISSION_LABELS, Role, RolePermission
+from .roles import ACTIONS, AGENT_ROLE_NAME, MODULES, PERMISSION_LABELS, SECTIONS, Role, RolePermission
 
 
 class UserManager(SoftDeleteManager, BaseUserManager):
@@ -128,15 +128,19 @@ class User(BaseModel, AbstractBaseUser):
         """Whether this user may perform `action` on `module`.
 
         user.has_permission('dashboard', 'update')
+
+        A section granted per sub-link ("agents") is allowed when any of its
+        sub-links is: the API behind them is shared.
         """
+        if module in SECTIONS:
+            return any(
+                self.has_permission(f'{module}.{child}', action) for child in MODULES[module]['children']
+            )
         if module not in PERMISSION_LABELS:
             raise ValueError(f'Unknown permission module: {module!r}')
         if action not in ACTIONS:
             raise ValueError(f'Unknown permission action: {action!r}')
         if not self.is_active:
-            return False
-        # An agent's account sees only its own record, whatever the role grants.
-        if self.agent_id and not module.startswith('agent_view.'):
             return False
         if self.is_superuser:
             return True

@@ -29,7 +29,7 @@ def make_product(**overrides):
 
 def make_role(**flags):
     role = Role.objects.create(name=f"storefront-{'-'.join(k for k, v in flags.items() if v) or 'none'}")
-    RolePermission.objects.create(role=role, module='storefront', **flags)
+    RolePermission.objects.create(role=role, module='storefront.products', **flags)
     return role
 
 

@@ -15,6 +15,9 @@ def admin_users():
 
 def _describe(filed):
     """One line on what was asked for, e.g. "Maria Alva · Humana in TX"."""
+    if filed.type == 'merch':
+        product = filed.product.name if filed.product else 'merch'
+        return f'{filed.buyer_name} · {product} ({filed.quantity} × {filed.size})'
     agent = filed.agent.name if filed.agent else '?'
     if filed.type == 'day_off':
         if filed.start_date == filed.end_date:
@@ -41,4 +44,30 @@ def notify_admins_of_request(filed, actor):
             updated_by=actor,
         )
         for admin in admin_users()
+    )
+
+
+def notify_agent_of_decision(filed, actor, previous_status):
+    """Tells the linked agent user when HR approves or denies their request.
+
+    Merch orders and agents with no sign-in account are skipped. Only fires
+    when status newly becomes approved or denied (not on note-only edits).
+    """
+    if filed.type == 'merch' or not filed.agent_id:
+        return
+    if filed.status not in ('approved', 'denied') or filed.status == previous_status:
+        return
+    recipient = User.objects.filter(agent_id=filed.agent_id, is_active=True).first()
+    if recipient is None:
+        return
+    decision = filed.get_status_display().lower()
+    title = f'Your {filed.get_type_display().lower()} request was {decision}'
+    Notification.objects.create(
+        recipient=recipient,
+        request=filed,
+        title=title,
+        body=_describe(filed),
+        link='/agent/calendar',
+        created_by=actor,
+        updated_by=actor,
     )
