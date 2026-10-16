@@ -6,6 +6,8 @@ from django.db import models, transaction
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
+from apps.base.api.permissions import own_only
+
 from apps.policies.models import (
     CarrierPolicy,
     CarrierPolicyNote,
@@ -189,8 +191,10 @@ def certification_queryset():
     return Certification.objects.select_related('agent', 'carrier')
 
 
-def get_certification_or_404(pk):
-    return get_object_or_404(certification_queryset(), pk=pk)
+def get_certification_or_404(pk, user=None):
+    """With `user`, an agent's sign-in finds only its own certifications (404 otherwise)."""
+    certifications = certification_queryset()
+    return get_object_or_404(own_only(user, certifications) if user else certifications, pk=pk)
 
 
 def filter_certifications(certifications, agent=None, carrier=None, line_of_business=None):

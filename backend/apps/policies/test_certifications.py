@@ -301,6 +301,46 @@ class CertificationPermissionTests(CertificationAPITestCase):
         self.assertNotIn('certifications', [module['code'] for module in response.data['data']])
 
 
+class AgentOwnCertificationTests(CertificationAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.agent_user = User.objects.create_user(
+            email='maria@example.com', password='Sup3r-secret!', full_name='Maria Alva', agent=self.agent
+        )
+        RolePermission.objects.create(
+            role=Role.objects.get(name='Agent'), module='agents.profile', can_view=True, can_create=True, can_update=True
+        )
+        self.client.force_authenticate(self.agent_user)
+        self.other = make_agent(name='Other', npn='2')
+        self.mine = make_certification(self.agent, self.humana, 'MAPD')
+        self.theirs = make_certification(self.other, self.humana, 'MAPD')
+
+    def test_list_shows_only_own(self):
+        response = self.client.get(self.list_url())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row['id'] for row in response.data['data']], [str(self.mine.pk)])
+
+    def test_others_detail_notes_and_file_are_404(self):
+        for url in (self.detail_url(self.theirs), self.notes_url(self.theirs), self.file_url(self.theirs)):
+            self.assertEqual(self.client.get(url).status_code, 404, url)
+        self.assertEqual(self.client.get(self.detail_url(self.mine)).status_code, 200)
+
+    def test_cannot_change_others(self):
+        response = self.client.patch(self.detail_url(self.theirs), {'is_verified': True}, format='json')
+        self.assertEqual(response.status_code, 404)
+        self.theirs.refresh_from_db()
+        self.assertFalse(self.theirs.is_verified)
+
+    def test_cannot_create_for_or_move_to_another_agent(self):
+        response = self.client.post(self.create_url(), {**self.sample, 'agent': str(self.other.pk)}, format='json')
+        self.assertEqual(response.status_code, 403)
+        response = self.client.patch(self.detail_url(self.mine), {'agent': str(self.other.pk)}, format='json')
+        self.assertEqual(response.status_code, 403)
+        self.mine.refresh_from_db()
+        self.assertEqual(self.mine.agent_id, self.agent.pk)
+        self.assertEqual(self.client.post(self.create_url(), self.sample, format='json').status_code, 201)
+
+
 def make_pdf(name='certificate.pdf', body=b'%PDF-1.7\n%fake\n'):
     return SimpleUploadedFile(name, body, content_type='application/pdf')
 

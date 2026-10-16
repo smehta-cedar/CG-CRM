@@ -19,6 +19,14 @@ MIDDLEWARE = ['silk.middleware.SilkyMiddleware'] + MIDDLEWARE
 # Optional cProfile per request; enable with @silk_profile or this flag.
 SILKY_PYTHON_PROFILER = True
 
+# /silk/ is superuser-only. Response bodies (portal passwords, JWTs) are
+# never stored; request bodies are already masked by SILKY_SENSITIVE_KEYS.
+SILKY_AUTHENTICATION = True
+SILKY_AUTHORISATION = True
+SILKY_PERMISSIONS = lambda user: user.is_superuser
+SILKY_MAX_RESPONSE_BODY_SIZE = 0
+LOGIN_URL = '/admin/login/'
+
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases

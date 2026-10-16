@@ -5,6 +5,7 @@ from django.shortcuts import get_object_or_404
 
 from apps.agents.models import Agent, AgentNote, AgentStateLicense
 from apps.agents.models.agents import split_name
+from apps.base.api.permissions import own_only
 
 # Helpers the agent views share. Checks that can reject a request live in
 # apps.agents.validators instead.
@@ -36,8 +37,10 @@ NOTE_FIELDS = (
 MASKED_NOTE_FIELDS = ('ssn_last4',)
 NOTE_MASK = '••••'
 
-def get_agent_or_404(pk):
-    return get_object_or_404(Agent.objects.prefetch_related('licenses__state'), pk=pk)
+def get_agent_or_404(pk, user=None):
+    """The agent; with `user`, an agent's sign-in finds only its own (others 404)."""
+    agents = Agent.objects.prefetch_related('licenses__state')
+    return get_object_or_404(own_only(user, agents, 'pk') if user else agents, pk=pk)
 
 
 def normalize_name(name):
