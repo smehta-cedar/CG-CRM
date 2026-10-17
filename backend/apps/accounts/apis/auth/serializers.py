@@ -3,7 +3,8 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
 
-from apps.accounts.utils import normalize_email
+from apps.accounts.utils import clear_failed_logins, normalize_email, record_failed_login
+from apps.accounts.validators import ensure_not_locked
 
 from ..users.serializers import SetPasswordSerializer, UserSerializer
 
@@ -16,6 +17,7 @@ class LoginSerializer(TokenObtainPairSerializer):
         400 invalid              a field is missing, blank or not an email (see "errors")
         401 invalid_credentials  unknown email or wrong password
         403 account_blocked      right password, but the account is blocked
+        403 account_locked       too many wrong passwords in a row (any password, right or wrong)
     """
 
     def __init__(self, *args, **kwargs):
@@ -24,6 +26,10 @@ class LoginSerializer(TokenObtainPairSerializer):
         self.fields['email'] = serializers.EmailField(write_only=True)
 
     def validate(self, attrs):
+        # Agents' sign-ins have no password, so wrong ones here never lock them.
+        user = get_user_model().objects.filter(email=normalize_email(attrs['email']), agent__isnull=True).first()
+        # Checked before the password, so a locked account can't be used to test passwords.
+        ensure_not_locked(user)
         try:
             tokens = super().validate(attrs)
         except AuthenticationFailed as exc:
@@ -32,7 +38,11 @@ class LoginSerializer(TokenObtainPairSerializer):
                 raise PermissionDenied(
                     'Your account is blocked. Please contact an administrator.', 'account_blocked'
                 ) from exc
+            if user is not None:
+                record_failed_login(user)
+                ensure_not_locked(user)
             raise AuthenticationFailed('Incorrect email or password.', 'invalid_credentials') from exc
+        clear_failed_logins(self.user)
         return {**tokens, 'user': UserSerializer(self.user).data}
 
     @staticmethod
@@ -57,6 +67,7 @@ class AgentLoginSerializer(serializers.Serializer):
         400 invalid              a field is missing or the email is not an email
         401 invalid_credentials  unknown email, or a wrong, used or expired code
         403 account_blocked      right code, but the agent is inactive
+        403 account_locked       too many wrong codes in a row (any code, right or wrong)
         403 staff_account        the email belongs to a staff account
     """
 
@@ -69,7 +80,12 @@ class AgentLoginSerializer(serializers.Serializer):
         from apps.accounts.utils import agent_for_email, issue_tokens, user_for_agent, verify_agent_code
 
         agent = agent_for_email(attrs['email'])
+        account = get_user_model().objects.filter(agent=agent).first() if agent else None
+        ensure_not_locked(account)
         if agent is None or not verify_agent_code(agent, attrs['code']):
+            if account is not None:
+                record_failed_login(account)
+                ensure_not_locked(account)
             raise AuthenticationFailed('Incorrect email or code.', 'invalid_credentials')
         if not agent.is_active:
             raise PermissionDenied(
@@ -83,6 +99,7 @@ class AgentLoginSerializer(serializers.Serializer):
                 'Your account is blocked. Please contact an administrator.',
                 'account_blocked',
             )
+        clear_failed_logins(user)
         update_last_login(None, user)
         tokens = issue_tokens(user)
         return {**tokens, 'user': UserSerializer(user).data}

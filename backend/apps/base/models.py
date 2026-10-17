@@ -1,10 +1,10 @@
 import uuid
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
-from .managers import AllObjectsManager, SoftDeleteManager
+from .managers import AllObjectsManager, SoftDeleteManager, soft_delete_children
 
 
 class BaseModel(models.Model):
@@ -30,7 +30,10 @@ class BaseModel(models.Model):
         Lead.all_objects                   # everything
         Lead.all_objects.deleted()         # only deleted rows
 
-    Soft deletes do not cascade and do not send pre_delete/post_delete.
+    Soft deletes cascade: rows joined by an on_delete=CASCADE key are soft
+    deleted in the same transaction, so a deleted agent's contracts,
+    passwords and tasks go with it. restore() brings back only the row
+    itself. No pre_delete/post_delete signals are sent.
     A unique field still counts deleted rows; to let a value be reused after
     a delete, use a conditional constraint instead of unique=True:
 
@@ -111,8 +114,11 @@ class BaseModel(models.Model):
             return 0, {}
         self.deleted_at = timezone.now()
         self.deleted_by = user
-        self.save(using=using, update_fields=['deleted_at', 'deleted_by'])
-        return 1, {self._meta.label: 1}
+        with transaction.atomic(using=using):
+            self.save(using=using, update_fields=['deleted_at', 'deleted_by'])
+            counts = soft_delete_children(type(self), [self.pk], user, self.deleted_at)
+        counts[self._meta.label] += 1
+        return sum(counts.values()), dict(counts)
 
     delete.alters_data = True
 

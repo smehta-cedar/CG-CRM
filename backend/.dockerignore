@@ -1,0 +1,12 @@
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+db.sqlite3
+private_media/
+_write_test.txt
+.git
+logs/
+staticfiles/
