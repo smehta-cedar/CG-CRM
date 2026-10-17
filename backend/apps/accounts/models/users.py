@@ -1,5 +1,6 @@
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.db import models
+from django.utils import timezone
 from django.utils.functional import cached_property
 
 from apps.base.managers import SoftDeleteManager
@@ -80,6 +81,11 @@ class User(BaseModel, AbstractBaseUser):
         help_text='Has every permission, whatever the role.',
     )
 
+    # Wrong passwords or codes in a row, and when the lock they caused ends
+    # (see apps.accounts.utils.record_failed_login).
+    failed_logins = models.PositiveSmallIntegerField(default=0, editable=False)
+    locked_until = models.DateTimeField(null=True, blank=True, editable=False)
+
     objects = UserManager()
 
     USERNAME_FIELD = 'email'
@@ -98,6 +104,10 @@ class User(BaseModel, AbstractBaseUser):
             self.email = self.email.strip().lower()
         self.full_name = ' '.join(self.full_name.split())
         super().save(*args, **kwargs)
+
+    @property
+    def is_login_locked(self):
+        return self.locked_until is not None and self.locked_until > timezone.now()
 
     def get_full_name(self):
         return self.full_name

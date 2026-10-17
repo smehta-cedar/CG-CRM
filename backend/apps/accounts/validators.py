@@ -54,6 +54,18 @@ def ensure_token_valid(serializer):
         raise InvalidToken(exc.args[0]) from exc
 
 
+def ensure_not_locked(user):
+    """`user` may be None (unknown email), which is never locked."""
+    from django.conf import settings
+
+    if user is not None and user.is_login_locked:
+        minutes = settings.LOGIN_LOCK_SECONDS // 60
+        raise PermissionDenied(
+            f'Too many wrong attempts. Try again in {minutes} minutes or ask an administrator to unlock your account.',
+            'account_locked',
+        )
+
+
 def ensure_current_password(user, current_password):
     if not user.check_password(current_password):
         raise ValidationError({'current_password': ['Current password is incorrect.']})

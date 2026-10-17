@@ -120,6 +120,32 @@ def record_note(user, actor, kind, changes):
     return UserNote.objects.create(user=user, kind=kind, changes=changes, created_by=actor, updated_by=actor)
 
 
+def record_failed_login(user):
+    """Count a wrong password or code. The LOGIN_MAX_FAILURES-th in a row locks
+    the account for LOGIN_LOCK_SECONDS and starts the count again."""
+    from datetime import timedelta
+
+    from django.conf import settings
+    from django.db.models import F
+    from django.utils import timezone
+
+    # F(): two wrong guesses at once both count.
+    User.objects.filter(pk=user.pk).update(failed_logins=F('failed_logins') + 1)
+    user.refresh_from_db(fields=['failed_logins'])
+    if user.failed_logins >= settings.LOGIN_MAX_FAILURES:
+        user.failed_logins = 0
+        user.locked_until = timezone.now() + timedelta(seconds=settings.LOGIN_LOCK_SECONDS)
+        user.save(update_fields=['failed_logins', 'locked_until'])
+
+
+def clear_failed_logins(user):
+    """Forget the wrong guesses and any lock, after a sign-in or an unlock."""
+    if user.failed_logins or user.locked_until:
+        user.failed_logins = 0
+        user.locked_until = None
+        user.save(update_fields=['failed_logins', 'locked_until'])
+
+
 def issue_tokens(user):
     refresh_token = RefreshToken.for_user(user)
     # Copied onto the access token. Staff tokens omit it.
@@ -204,7 +230,7 @@ def send_agent_code(email):
     except APIException:
         # The email is a staff account, or another agent's sign-in account.
         return
-    if not user.is_active:
+    if not user.is_active or user.is_login_locked:
         return
     try:
         agent_code_device(user).generate_challenge()

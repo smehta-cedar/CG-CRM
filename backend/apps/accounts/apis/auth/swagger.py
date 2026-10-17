@@ -29,6 +29,7 @@ login = extend_schema(
         'Error codes: `invalid` (400, a field is missing, blank or not an email), '
         '`invalid_credentials` (401, unknown email or wrong password), '
         '`account_blocked` (403, right password but the account is blocked), '
+        '`account_locked` (403, five wrong passwords in a row; unlocks after 15 minutes), '
         '`throttled` (429, too many attempts).'
     ),
     request=LoginSerializer,
@@ -43,7 +44,7 @@ agent_code = extend_schema(
     description=(
         'Emails a new six-digit code to the work email when it belongs to exactly one active agent. '
         'The code works once and expires after five minutes; another is not sent within a minute. '
-        'The reply is the same when the email is unknown, shared or inactive. '
+        'The reply is the same when the email is unknown, shared, inactive or locked. '
         'Error codes: `invalid` (400, not an email), `throttled` (429).'
     ),
     request=AgentCodeRequestSerializer,
@@ -59,6 +60,7 @@ agent_login = extend_schema(
         'Work email and the code from the agent-code email. No password. '
         'Error codes: `invalid` (400), `invalid_credentials` (401, unknown email, or a wrong, used or expired code), '
         '`account_blocked` (403), `staff_account` (403, the email is a staff account), '
+        '`account_locked` (403, five wrong codes in a row; unlocks after 15 minutes), '
         '`throttled` (429).'
     ),
     request=AgentLoginSerializer,

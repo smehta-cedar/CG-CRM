@@ -8,7 +8,7 @@ role/permission system driven by a database-backed catalog.
 ```bash
 cd backend
 venv/Scripts/activate          # Windows;  source venv/bin/activate elsewhere
-pip install -r requirements.txt
+pip install -r requirements/local.txt   # requirements/prod.txt on servers
 python manage.py migrate
 python manage.py seed --email you@example.com
 python manage.py runserver

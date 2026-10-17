@@ -6,7 +6,7 @@ from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 
 from apps.base.api.pagination import paginate
-from apps.base.api.permissions import module_permission
+from apps.base.api.permissions import ensure_own, module_permission, own_only
 from apps.base.api.response import APIResponse
 from apps.policies.models import Certification, CertificationNote
 from apps.policies.utils import (
@@ -46,7 +46,7 @@ def certification_list(request):
     filters = query.validated_data
 
     certifications = filter_certifications(
-        certification_queryset(),
+        own_only(request.user, certification_queryset()),
         agent=filters.get('agent'),
         carrier=filters.get('carrier'),
         line_of_business=filters.get('line_of_business'),
@@ -68,6 +68,7 @@ def certification_create(request):
 
     # Nothing else is checked: a certification is an add-on.
     agent = resolve_agent(data['agent'])
+    ensure_own(request.user, agent.pk)
     carrier = resolve_carrier(data['carrier']) if data.get('carrier') else None
     upload = data.get('file')
     if upload is not None:
@@ -107,7 +108,7 @@ def certification_create(request):
 @api_view(['GET', 'PATCH', 'DELETE'])
 @permission_classes([IsAuthenticated, CAN_MANAGE_CERTIFICATIONS])
 def certification_detail(request, pk):
-    certification = get_certification_or_404(pk)
+    certification = get_certification_or_404(pk, request.user)
 
     if request.method == 'GET':
         return APIResponse(CertificationSerializer(certification).data, 'Certification fetched successfully.')
@@ -121,6 +122,7 @@ def certification_detail(request, pk):
         # Nothing else is checked: a certification is an add-on.
         if 'agent' in fields:
             fields['agent'] = resolve_agent(fields['agent'])
+            ensure_own(request.user, fields['agent'].pk)
         if 'carrier' in fields:
             fields['carrier'] = resolve_carrier(fields['carrier']) if fields['carrier'] else None
 
@@ -153,7 +155,7 @@ def certification_detail(request, pk):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, CAN_MANAGE_CERTIFICATIONS])
 def certification_notes(request, pk):
-    certification = get_certification_or_404(pk)
+    certification = get_certification_or_404(pk, request.user)
     # Newest first (the model's ordering). Not paginated: a certification has a handful.
     notes = certification.notes.select_related('created_by')
     return APIResponse(CertificationNoteSerializer(notes, many=True).data, 'Certification notes fetched successfully.')
@@ -163,7 +165,7 @@ def certification_notes(request, pk):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, CAN_MANAGE_CERTIFICATIONS])
 def certification_file(request, pk):
-    certification = get_certification_or_404(pk)
+    certification = get_certification_or_404(pk, request.user)
     if not certification.file:
         raise NotFound('This certification has no file.')
     try:

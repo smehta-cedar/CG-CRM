@@ -1,0 +1,19 @@
+# Prod: gunicorn, code baked into the image, settings from .env.prod.
+#   docker compose -f docker-compose.prod.yml up -d --build
+name: cg-crm-prod
+
+services:
+  web:
+    build:
+      context: .
+      args:
+        REQUIREMENTS: prod
+    command: sh sh/prod.sh
+    env_file: .env.prod
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      # Kept on the server across rebuilds.
+      - ./logs:/app/logs
+      - ./private_media:/app/private_media

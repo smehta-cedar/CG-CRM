@@ -1,0 +1,19 @@
+# Django only; the database stays the PostgreSQL running on the host.
+services:
+  web:
+    build:
+      context: .
+      args:
+        REQUIREMENTS: local
+    command: sh sh/local.sh
+    env_file: .env
+    environment:
+      # localhost inside the container is the container itself.
+      DB_HOST: host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+

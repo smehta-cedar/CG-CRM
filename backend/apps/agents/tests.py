@@ -4,6 +4,7 @@ from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Role, RolePermission, User
+from apps.accounts.models.roles import AGENT_ROLE_NAME
 from apps.agency.models import State
 
 from .models import Agent, AgentNote, AgentStateLicense
@@ -561,3 +562,48 @@ class AgentLicenseRenewalTests(AgentAPITestCase):
         row = self.patch_tx(agent, start_date='2020-01-01', end_date=past, renewing=True)
         self.assertTrue(row['renewing'])
         self.assertEqual(row['status'], 'expired')
+
+
+class AgentOwnRecordTests(AgentAPITestCase):
+    """An agent's sign-in reaches only its own agent, and not its sign-in, status or licences."""
+
+    def setUp(self):
+        self.me = make_agent(licenses=[{'state': 'TX'}])
+        self.other = make_agent(name='Other Agent', npn='11111111', email='other@example.com', licenses=[])
+        self.user = User.objects.create_user(email=self.me.email, full_name=self.me.name, agent=self.me)
+        # An agent's sign-in uses the built-in Agent role; grant it everything here.
+        role = Role.objects.get(name__iexact=AGENT_ROLE_NAME)
+        role.permissions.all().delete()
+        RolePermission.objects.create(role=role, module='agents.list', can_view=True, can_create=True, can_update=True, can_delete=True)
+        self.client.force_authenticate(self.user)
+
+    def test_list_holds_only_itself(self):
+        ids = [row['id'] for row in self.client.get(self.list_url()).data['data']]
+        self.assertEqual(ids, [str(self.me.pk)])
+
+    def test_another_agent_is_not_found(self):
+        self.assertEqual(self.client.get(self.detail_url(self.other)).status_code, 404)
+        self.assertEqual(self.client.get(self.notes_url(self.other)).status_code, 404)
+        response = self.client.patch(self.detail_url(self.other), {'email': 'me@evil.com'}, format='json')
+        self.assertEqual(response.status_code, 404)
+        self.other.refresh_from_db()
+        self.assertEqual(self.other.email, 'other@example.com')
+
+    def test_cannot_create_or_delete(self):
+        self.assertEqual(self.client.post(self.create_url(), {'name': 'X', 'npn': '22222222'}, format='json').status_code, 403)
+        self.assertEqual(self.client.delete(self.detail_url(self.me)).status_code, 403)
+
+    def test_can_edit_own_profile_with_the_form_sending_unchanged_locked_fields(self):
+        body = {'phone': '(555)000-0000', 'email': self.me.email.upper(), 'status': 'active', 'licenses': []}
+        response = self.client.patch(self.detail_url(self.me), body, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['phone'], '(555)000-0000')
+        # Licences sent are ignored.
+        self.assertEqual([row['state'] for row in response.data['data']['licenses']], ['TX'])
+
+    def test_cannot_change_own_email_or_status(self):
+        for body in ({'email': 'new@example.com'}, {'status': 'inactive'}, {'is_active': False}):
+            self.assertEqual(self.client.patch(self.detail_url(self.me), body, format='json').status_code, 403, body)
+        self.me.refresh_from_db()
+        self.assertEqual(self.me.email, SAMPLE['email'])
+        self.assertTrue(self.me.is_active)

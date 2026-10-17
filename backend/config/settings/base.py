@@ -1,6 +1,9 @@
 from datetime import timedelta
 from pathlib import Path
 
+import dj_database_url
+from decouple import config
+
 # base.py -> settings/ -> config/ -> backend/
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -83,6 +86,19 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+
+
+# Database
+# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
+
+# PostgreSQL, as production gives it: DATABASE_URL for the connection
+# (postgres://user@host:port/name) and the password on its own, so it needs
+# no URL-escaping. Both come from backend/.env.
+DATABASES = {'default': dj_database_url.parse(config('DATABASE_URL'))}
+DATABASES['default']['PASSWORD'] = config('DB_PASSWORD')
+
+# Docker sets DB_HOST: localhost inside a container is the container itself.
+DATABASES['default']['HOST'] = config('DB_HOST', default=DATABASES['default']['HOST'])
 
 
 # Password validation
@@ -174,6 +190,14 @@ OTP_EMAIL_BODY_TEMPLATE = 'Your sign-in code is {{ token }}\n\nIt works once and
 # Seconds a code stays valid, and between two emails to the same agent.
 OTP_EMAIL_TOKEN_VALIDITY = 300
 OTP_EMAIL_COOLDOWN_DURATION = 60
+# No growing delay between wrong codes: the login lock below covers them.
+OTP_EMAIL_THROTTLE_FACTOR = 0
+
+
+# Login lock: this many wrong passwords or codes in a row lock the account
+# for LOGIN_LOCK_SECONDS, or until a superuser unlocks it.
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCK_SECONDS = 15 * 60
 
 
 # OpenAPI schema / Swagger UI (drf-spectacular)
@@ -233,4 +257,46 @@ SIMPLE_JWT = {
     # access token issued before.
     'CHECK_REVOKE_TOKEN': True,
     # SIGNING_KEY defaults to SECRET_KEY, which is set per-environment.
+}
+
+
+# Logging: every ERROR and above (unhandled exceptions, 500s, logger.exception)
+# goes to logs/error.log as a readable block (config/log_format.py), rotated
+# at 5 MB with 5 old files kept. logs/error-raw.log gets the same errors in
+# Python's plain format and is never rotated, so nothing is lost there even
+# if the readable formatter fails or a rotation races between workers.
+# https://docs.djangoproject.com/en/5.2/topics/logging/
+
+LOG_DIR = BASE_DIR / 'logs'
+LOG_DIR.mkdir(exist_ok=True)
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'readable': {'()': 'config.log_format.ReadableFormatter'},
+        'raw': {'format': '%(asctime)s %(levelname)s %(name)s [pid %(process)d] %(message)s'},
+    },
+    'handlers': {
+        'error_file': {
+            'level': 'ERROR',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': LOG_DIR / 'error.log',
+            'maxBytes': 5 * 1024 * 1024,
+            'backupCount': 5,
+            'formatter': 'readable',
+            'encoding': 'utf-8',
+        },
+        'raw_file': {
+            'level': 'ERROR',
+            'class': 'logging.FileHandler',
+            'filename': LOG_DIR / 'error-raw.log',
+            'formatter': 'raw',
+            'encoding': 'utf-8',
+        },
+    },
+    'root': {
+        'handlers': ['error_file', 'raw_file'],
+        'level': 'ERROR',
+    },
 }

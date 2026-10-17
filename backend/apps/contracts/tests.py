@@ -198,6 +198,22 @@ class ContractDetailTests(ContractAPITestCase):
         # A deleted contract's notes drop out of the all-notes list.
         self.assertEqual(self.client.get(self.notes_all_url()).data['meta']['total_items'], 1)
 
+    def test_deleting_the_agent_deletes_its_contracts_and_frees_the_writing_number(self):
+        contract = self.make_contract(writing_number='W9')
+        contract.notes.create(changes=[])
+        self.agent.delete()
+        self.assertTrue(CarrierContract.all_objects.get(pk=contract.pk).is_deleted)
+        self.assertFalse(CarrierContractNote.objects.filter(contract=contract).exists())
+        self.assertEqual(self.client.get(self.list_url()).data['meta']['total_items'], 0)
+        other = {**self.sample, 'agent_id': str(self.other_agent.pk), 'writing_number': 'W9', 'appointed_states': []}
+        self.assertEqual(self.client.post(self.create_url(), other, format='json').status_code, 201)
+
+    def test_deleting_the_carrier_deletes_its_contracts(self):
+        contract = self.make_contract()
+        self.carrier.delete()
+        self.assertTrue(CarrierContract.all_objects.get(pk=contract.pk).is_deleted)
+        self.assertTrue(AgencyCarrierContract.all_objects.get(carrier=self.carrier).is_deleted)
+
 
 class ContractPermissionTests(ContractAPITestCase):
     def setUp(self):

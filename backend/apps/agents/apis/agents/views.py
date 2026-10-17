@@ -1,7 +1,7 @@
 from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 
 from apps.agents.models import Agent, AgentNote
@@ -30,7 +30,7 @@ from apps.agents.validators import (
 )
 from apps.accounts.utils import deactivate_agent_login, sync_agent_login_user
 from apps.base.api.pagination import paginate
-from apps.base.api.permissions import module_permission
+from apps.base.api.permissions import ensure_own, module_permission, own_only
 from apps.base.api.response import APIResponse
 
 from . import swagger
@@ -43,6 +43,25 @@ from .serializers import (
 )
 
 CAN_MANAGE_AGENTS = module_permission('agents')
+
+# Fields only staff may change: the work email is the sign-in, status turns it
+# on and off, and licences are checked by staff.
+STAFF_ONLY_FIELDS = ('email', 'status', 'is_active')
+
+
+def _drop_staff_only(agent, fields):
+    """An agent's sign-in edits its own profile, but not its sign-in, status or
+    licences. The form sends them anyway, so unchanged values are dropped and a
+    changed one is refused. Licences are always dropped."""
+    fields.pop('licenses', None)
+    for field in STAFF_ONLY_FIELDS:
+        if field not in fields:
+            continue
+        value = fields.pop(field)
+        if field == 'email':
+            value = normalize_email(value)
+        if value != getattr(agent, field):
+            raise PermissionDenied('Only staff can change the work email or status.')
 
 
 def _address_columns(address):
@@ -63,7 +82,7 @@ def agent_list(request):
     query.is_valid(raise_exception=True)
     filters = query.validated_data
 
-    agents = Agent.objects.prefetch_related('licenses__state')
+    agents = own_only(request.user, Agent.objects.prefetch_related('licenses__state'), 'pk')
 
     search = filters.get('search')
     if search:
@@ -86,6 +105,8 @@ def agent_list(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, CAN_MANAGE_AGENTS])
 def agent_create(request):
+    if request.user.agent_id:
+        raise PermissionDenied('Only staff can add agents.')
     serializer = AgentCreateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
@@ -133,7 +154,7 @@ def agent_create(request):
 @api_view(['GET', 'PATCH', 'DELETE'])
 @permission_classes([IsAuthenticated, CAN_MANAGE_AGENTS])
 def agent_detail(request, pk):
-    agent = get_agent_or_404(pk)
+    agent = get_agent_or_404(pk, request.user)
 
     if request.method == 'GET':
         return APIResponse(AgentSerializer(agent).data, 'Agent fetched successfully.')
@@ -143,6 +164,9 @@ def agent_detail(request, pk):
         serializer = AgentUpdateSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         fields = dict(serializer.validated_data)
+        ensure_own(request.user, agent.pk)
+        if request.user.agent_id:
+            _drop_staff_only(agent, fields)
 
         # The name and NPN only have to be free when they are actually changing.
         resolve_name(fields, agent)
@@ -191,6 +215,8 @@ def agent_detail(request, pk):
 
     # DELETE: soft delete; the name and NPN become free for reuse.
     # The sign-in account, if one was created, can no longer be used.
+    if request.user.agent_id:
+        raise PermissionDenied('Only staff can delete agents.')
     deactivate_agent_login(agent)
     agent.delete(user=request.user)
     return APIResponse(None, 'Agent deleted successfully.')
@@ -200,7 +226,7 @@ def agent_detail(request, pk):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, CAN_MANAGE_AGENTS])
 def agent_notes(request, pk):
-    agent = get_agent_or_404(pk)
+    agent = get_agent_or_404(pk, request.user)
     # Newest first (the model's ordering). Not paginated: an agent has a handful.
     notes = agent.notes.select_related('created_by')
     return APIResponse(AgentNoteSerializer(notes, many=True).data, 'Agent notes fetched successfully.')

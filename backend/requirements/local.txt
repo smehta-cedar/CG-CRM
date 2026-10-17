@@ -1,0 +1,4 @@
+-r base.txt
+
+django-silk==5.6.0
+gprof2dot==2025.4.14
